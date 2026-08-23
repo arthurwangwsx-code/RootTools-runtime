@@ -1,0 +1,5 @@
+build/
+Generated/
+RootTools.xcodeproj/
+.roottools-token
+.DS_Store
