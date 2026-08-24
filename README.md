@@ -30,6 +30,15 @@ Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `ide
 bash Scripts/install-jailbreak.sh
 ```
 
+If the host environment cannot perform privileged `/var/jb` deployment, build a rootless `.deb` for explicit owner installation in Sileo/Filza:
+
+```bash
+bash Scripts/build.sh
+python3 Scripts/package-rootless-deb.py
+```
+
+See `docs/deployment/rootless-deb.md` for the fixed package allowlist and post-install behavior.
+
 Target layout on a rootless Dopamine device:
 
 - App: `/var/jb/Applications/RootTools.app`

@@ -4,3 +4,5 @@ RootTools.xcodeproj/
 .roottools-token
 .roottools-agent-token
 .DS_Store
+__pycache__/
+*.pyc

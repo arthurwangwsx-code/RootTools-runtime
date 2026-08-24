@@ -43,7 +43,8 @@ python3 -m py_compile \
   Scripts/device_service.py \
   Scripts/device_doctor.py \
   Scripts/root_exec.py \
-  Scripts/verify-device.py
+  Scripts/verify-device.py \
+  Scripts/package-rootless-deb.py
 bash -n Scripts/build.sh Scripts/install-jailbreak.sh
 
 echo "RootTools contract tests: PASS"
