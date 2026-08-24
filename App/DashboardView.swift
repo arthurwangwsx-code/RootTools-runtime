@@ -45,7 +45,17 @@ struct DashboardView: View {
             .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Root Tools")
             .navigationBarTitleDisplayMode(.inline)
-            .navigationDestination(for: ToolKind.self) { ToolDetailView(tool: $0) }
+            .navigationDestination(for: ToolKind.self) { tool in
+                if tool == .capabilities {
+                    CapabilitiesView()
+                } else if tool == .permissions {
+                    PermissionsView()
+                } else if tool == .trustedAgents {
+                    TrustedAgentsView()
+                } else {
+                    ToolDetailView(tool: tool)
+                }
+            }
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button {
@@ -98,7 +108,45 @@ struct DashboardView: View {
 
     private var capabilityFooter: some View {
         VStack(alignment: .leading, spacing: 10) {
-            Text("Privileged adapters").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            Text("Device capability truth").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            if store.capabilities.isEmpty {
+                Text("Capability catalog is unavailable until the v0.3 control plane is installed.")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    RiskBadge(risk: "R0", count: enabledCapabilityCount(risk: "R0"))
+                    RiskBadge(risk: "R1", count: enabledCapabilityCount(risk: "R1"))
+                    RiskBadge(risk: "R2", count: enabledCapabilityCount(risk: "R2"))
+                    RiskBadge(risk: "R3", count: enabledCapabilityCount(risk: "R3"))
+                }
+                if let invariants = store.capabilityInvariants {
+                    Label(
+                        invariants.rawPrivilegedShellExposed || invariants.r3Exposed
+                            ? "Execution policy needs attention"
+                            : "R3 and raw privileged shell are blocked",
+                        systemImage: invariants.rawPrivilegedShellExposed || invariants.r3Exposed
+                            ? "exclamationmark.shield.fill"
+                            : "checkmark.shield.fill"
+                    )
+                    .font(.caption2.weight(.medium))
+                    .foregroundStyle(invariants.rawPrivilegedShellExposed || invariants.r3Exposed ? Color.orange : Color.secondary)
+                }
+            }
+
+            Divider()
+            Text("Lock-aware execution").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            HStack(spacing: 8) {
+                CapabilityDot(label: (store.status.lockState ?? "unknown").uppercased(), ready: store.status.deviceLocked == false)
+                CapabilityDot(label: "HEADLESS", ready: store.status.headlessExecutionReady == true)
+                CapabilityDot(label: "UI READY", ready: store.status.uiExecutionReady == true)
+                if let pending = store.status.automationPendingCount, pending > 0 {
+                    MiniBadge(text: "\(pending) queued", symbol: "clock.arrow.circlepath")
+                }
+            }
+
+            Divider()
+            Text("Runtime adapters").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
             HStack(spacing: 8) {
                 CapabilityDot(label: "SSH", ready: store.status.sshReady)
                 CapabilityDot(label: "Frida", ready: store.status.fridaReady)
@@ -109,6 +157,10 @@ struct DashboardView: View {
         .frame(maxWidth: .infinity, alignment: .leading)
         .padding(15)
         .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 18))
+    }
+
+    private func enabledCapabilityCount(risk: String) -> Int {
+        store.capabilities.filter { $0.risk == risk && $0.enabled }.count
     }
 
     private func formatBytes(_ bytes: UInt64) -> String {
@@ -182,6 +234,20 @@ private struct CapabilityDot: View {
         HStack(spacing: 5) {
             Circle().fill(ready ? Color.green : Color.orange).frame(width: 6, height: 6)
             Text(label).font(.caption2)
+        }
+        .padding(.horizontal, 8).padding(.vertical, 5)
+        .background(Color.primary.opacity(0.06), in: Capsule())
+    }
+}
+
+private struct RiskBadge: View {
+    let risk: String
+    let count: Int
+
+    var body: some View {
+        HStack(spacing: 5) {
+            Text(risk).font(.caption2.weight(.bold))
+            Text("\(count)").font(.caption2.monospacedDigit())
         }
         .padding(.horizontal, 8).padding(.vertical, 5)
         .background(Color.primary.opacity(0.06), in: Capsule())

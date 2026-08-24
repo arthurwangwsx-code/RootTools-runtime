@@ -2,4 +2,5 @@ build/
 Generated/
 RootTools.xcodeproj/
 .roottools-token
+.roottools-agent-token
 .DS_Store
