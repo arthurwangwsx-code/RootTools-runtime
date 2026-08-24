@@ -38,7 +38,12 @@ python3 Tests/http_contract_test.py \
   --admin-token "$TOKEN" \
   --agent-token "$AGENT_TOKEN"
 
-python3 -m py_compile Scripts/device_service.py Scripts/device_doctor.py Scripts/root_exec.py Scripts/verify-device.py
+python3 -m py_compile \
+  Scripts/usbmux_proxy.py \
+  Scripts/device_service.py \
+  Scripts/device_doctor.py \
+  Scripts/root_exec.py \
+  Scripts/verify-device.py
 bash -n Scripts/build.sh Scripts/install-jailbreak.sh
 
 echo "RootTools contract tests: PASS"

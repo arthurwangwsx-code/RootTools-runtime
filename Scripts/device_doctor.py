@@ -9,12 +9,18 @@ passcode and it never executes a privileged command on the phone.
 from __future__ import annotations
 
 import argparse
+import asyncio
 import json
 import os
 import socket
+import shutil
 import subprocess
 import sys
 import time
+
+from usbmux_proxy import discover_udid, port_forward
+
+from pymobiledevice3.lockdown import create_using_usbmux
 
 
 PORTS = {
@@ -26,6 +32,8 @@ PORTS = {
 
 
 def run_json(command: list[str]) -> object | None:
+    if command and command[0] == "pymobiledevice3" and shutil.which("pymobiledevice3") is None:
+        command = [sys.executable, "-m", "pymobiledevice3", *command[1:]]
     try:
         result = subprocess.run(command, text=True, capture_output=True, timeout=8)
     except (OSError, subprocess.TimeoutExpired):
@@ -39,6 +47,19 @@ def run_json(command: list[str]) -> object | None:
 
 
 def lockdown_value(udid: str, key: str) -> str | None:
+    if shutil.which("ideviceinfo") is None:
+        async def read_value():
+            client = await create_using_usbmux(serial=udid)
+            try:
+                return await client.get_value(key=key)
+            finally:
+                await client.close()
+
+        try:
+            value = asyncio.run(read_value())
+        except Exception:
+            return None
+        return str(value) if value is not None else None
     try:
         value = subprocess.check_output(["ideviceinfo", "-u", udid, "-k", key], text=True, timeout=5).strip()
     except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired):
@@ -47,6 +68,20 @@ def lockdown_value(udid: str, key: str) -> str | None:
 
 
 def passive_port_probe(udid: str, remote_port: int) -> bool:
+    if shutil.which("iproxy") is None:
+        try:
+            with port_forward(udid, remote_port) as local_port:
+                with socket.create_connection(("127.0.0.1", local_port), timeout=1) as sock:
+                    sock.settimeout(0.35)
+                    try:
+                        data = sock.recv(1)
+                        return data != b""
+                    except socket.timeout:
+                        return True
+                    except OSError:
+                        return False
+        except Exception:
+            return False
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as holder:
         holder.bind(("127.0.0.1", 0))
         local_port = holder.getsockname()[1]
@@ -94,7 +129,9 @@ def device_locked(udid: str) -> bool | None:
 
 def dopamine_state(udid: str) -> tuple[bool | None, bool | None]:
     apps = run_json(["pymobiledevice3", "apps", "list", "--udid", udid])
-    installed = isinstance(apps, dict) and "com.opa334.Dopamine" in apps
+    installed: bool | None = None
+    if isinstance(apps, dict):
+        installed = "com.opa334.Dopamine" in apps
 
     processes = run_json(["pymobiledevice3", "developer", "dvt", "proclist", "--udid", udid])
     running: bool | None = None
@@ -117,7 +154,10 @@ def main() -> int:
     udid = args.udid
     if not udid:
         try:
-            udid = subprocess.check_output(["idevice_id", "-l"], text=True, timeout=5).splitlines()[0]
+            if shutil.which("idevice_id"):
+                udid = subprocess.check_output(["idevice_id", "-l"], text=True, timeout=5).splitlines()[0]
+            else:
+                udid = discover_udid()
         except (OSError, subprocess.CalledProcessError, subprocess.TimeoutExpired, IndexError):
             print("No USB iPhone found", file=sys.stderr)
             return 2

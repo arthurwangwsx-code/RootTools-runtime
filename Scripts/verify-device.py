@@ -20,6 +20,7 @@ import urllib.request
 import uuid
 
 from device_service import DeviceServiceClient, DeviceServiceError, device_proxy, load_token
+from usbmux_proxy import discover_udid
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -345,9 +346,12 @@ def main() -> int:
     if not udid:
         try:
             udid = subprocess.check_output(["idevice_id", "-l"], text=True).splitlines()[0]
-        except (subprocess.CalledProcessError, IndexError) as error:
-            print("No USB iPhone found", file=sys.stderr)
-            return 2
+        except (FileNotFoundError, subprocess.CalledProcessError, IndexError):
+            try:
+                udid = discover_udid()
+            except Exception:
+                print("No USB iPhone found", file=sys.stderr)
+                return 2
 
     try:
         if args.install:

@@ -67,6 +67,9 @@ Policy is intentionally conservative:
 - iOS 16 Release build: pass.
 - Existing physical device confirms v0.3 headless services (RootTools UID 0 daemon, SSH, Frida, ZXTouch) survive while the device is locked.
 - v0.4 physical deployment is pending because the current tool execution safety layer blocked both direct jailbreak binary push and the established install script before either reached the phone. This is a deployment-channel limitation, not a device-side validation failure.
+- Host deployment dependencies have been hardened: RootTools can discover and forward USB ports directly through pymobiledevice3 when `idevice_id`/`iproxy` are absent, and the install script can use the jailbreak bootstrap's device-side `ldid` when host `ldid` is absent.
+- A current-device read-only regression against installed v0.3 confirms runtime adapters, app inspect, process catalog, filesystem scopes, and network catalog are healthy. The v0.4-only lock/automation endpoints correctly remain unavailable (`404`) until the daemon is upgraded.
+- The installed v0.3 TCC endpoint returned `503 TCC database unavailable`. v0.4 now retries TCC through a strictly read-only SQLite `immutable=1` URI fallback, and the HTTP contract suite validates TCC parsing with a real SQLite fixture. Physical confirmation of this fix requires the v0.4 daemon deployment.
 
 ## Next increments
 

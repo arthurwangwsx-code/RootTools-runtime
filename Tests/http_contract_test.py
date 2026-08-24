@@ -93,9 +93,20 @@ def main() -> int:
         audit_path = temp_path / "audit.log"
         ledger_path = temp_path / "idempotency.sqlite3"
         runtime_agent_token_path = temp_path / "agent-token"
+        tcc_path = temp_path / "TCC.db"
         mobile_scope = temp_path / "mobile-files"
         bootstrap_scope = temp_path / "bootstrap-files"
         port = free_port()
+        tcc = sqlite3.connect(tcc_path)
+        tcc.execute(
+            "CREATE TABLE access(service TEXT, client TEXT, auth_value INTEGER, auth_reason INTEGER, last_modified INTEGER)"
+        )
+        tcc.execute(
+            "INSERT INTO access(service,client,auth_value,auth_reason,last_modified) VALUES(?,?,?,?,?)",
+            ("kTCCServiceCamera", "com.example.fixture", 2, 4, 123456),
+        )
+        tcc.commit()
+        tcc.close()
         env = {
             **__import__("os").environ,
             "ROOTTOOLS_PORT": str(port),
@@ -103,6 +114,7 @@ def main() -> int:
             "ROOTTOOLS_AUDIT_PATH": str(audit_path),
             "ROOTTOOLS_LEDGER_PATH": str(ledger_path),
             "ROOTTOOLS_AGENT_TOKEN_PATH": str(runtime_agent_token_path),
+            "ROOTTOOLS_TCC_DB": str(tcc_path),
             "ROOTTOOLS_MOBILE_SCOPE_ROOT": str(mobile_scope),
             "ROOTTOOLS_BOOTSTRAP_SCOPE_ROOT": str(bootstrap_scope),
             "ROOTTOOLS_TEST_LOCK_STATE": "locked",
@@ -206,6 +218,12 @@ def main() -> int:
             status, network_catalog = request(port, args.agent_token, "GET", "/v1/network/catalog")
             assert status == 200
             assert isinstance(network_catalog["interfaces"], list)
+
+            status, tcc_payload = request(port, args.agent_token, "GET", "/v1/permissions/tcc")
+            assert status == 200
+            assert tcc_payload["count"] == 1
+            assert tcc_payload["records"][0]["service"] == "kTCCServiceCamera"
+            assert tcc_payload["records"][0]["client"] == "com.example.fixture"
 
             status, screen_info = request(port, args.agent_token, "GET", "/v1/ui/screen-info")
             assert status == 503

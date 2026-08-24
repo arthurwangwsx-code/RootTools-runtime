@@ -10,6 +10,8 @@ import subprocess
 import sys
 import time
 
+from usbmux_proxy import discover_udid, port_forward
+
 FRIDA_PORT = 27042
 
 def frida_python() -> str:
@@ -20,6 +22,10 @@ def frida_python() -> str:
 
 @contextlib.contextmanager
 def bridge(udid: str):
+    if shutil.which("iproxy") is None:
+        with port_forward(udid, FRIDA_PORT) as port:
+            yield port
+        return
     with socket.socket() as s:
         s.bind(("127.0.0.1", 0)); port = s.getsockname()[1]
     p = subprocess.Popen(["iproxy", "-u", udid, f"{port}:{FRIDA_PORT}"], stdout=subprocess.DEVNULL, stderr=subprocess.DEVNULL)
@@ -112,7 +118,12 @@ def main():
     e=sub.add_parser("exec"); e.add_argument("command")
     p=sub.add_parser("push"); p.add_argument("local", type=Path); p.add_argument("remote")
     args=ap.parse_args()
-    udid=args.udid or subprocess.check_output(["idevice_id","-l"], text=True).splitlines()[0]
+    if args.udid:
+        udid=args.udid
+    elif shutil.which("idevice_id"):
+        udid=subprocess.check_output(["idevice_id","-l"], text=True).splitlines()[0]
+    else:
+        udid=discover_udid()
     if args.action=="exec":
         rc,out,err=run_root(udid,args.command); print(out,end=''); print(err,end='',file=sys.stderr); raise SystemExit(rc)
     push(udid,args.local,args.remote)

@@ -13,12 +13,15 @@ import json
 import os
 from pathlib import Path
 import socket
+import shutil
 import subprocess
 import sys
 import time
 import urllib.error
 import urllib.request
 import uuid
+
+from usbmux_proxy import discover_udid, port_forward
 
 
 DEVICE_PORT = 45821
@@ -41,6 +44,11 @@ def free_local_port() -> int:
 def device_proxy(udid: str | None):
     if not udid:
         yield DEVICE_PORT
+        return
+
+    if not shutil.which("iproxy"):
+        with port_forward(udid, DEVICE_PORT) as port:
+            yield port
         return
 
     port = free_local_port()
@@ -354,7 +362,13 @@ def main() -> int:
     args = parser.parse_args()
     try:
         token = load_token(args.token_file)
-        with device_proxy(args.udid) as port:
+        target_udid = args.udid
+        if not target_udid:
+            try:
+                target_udid = discover_udid()
+            except Exception:
+                target_udid = None
+        with device_proxy(target_udid) as port:
             result = execute(DeviceServiceClient(port, token, args.caller), args)
         if args.command == "agent-rotate" and args.save_to and result.get("ok") and result.get("output"):
             args.save_to.parent.mkdir(parents=True, exist_ok=True)

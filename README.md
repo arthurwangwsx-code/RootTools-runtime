@@ -22,6 +22,8 @@ P1 Control Plane is now complete on the `v0.3.0` development line: registry-driv
 
 The `v0.4.0` line starts the lock-aware automation foundation. The UID 0 daemon now exposes typed lock/display readiness, distinguishes headless execution from interactive UI readiness, and persists deferred UI jobs in its SQLite control-plane store. The first deferred verb is `device.automation.queue-app-launch`: when the phone is locked or the display is blanked the job remains pending, and the daemon executes it only after the UI becomes available. Device passcode bypass is explicitly out of policy. See `docs/phases/p4-lock-aware-automation.md`.
 
+Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
+
 ## Build and install
 
 ```bash

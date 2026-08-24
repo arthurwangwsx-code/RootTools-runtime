@@ -1425,9 +1425,21 @@ static void send_hello(int fd, RTAuthRole role) {
 }
 
 static void send_tcc_permissions(int fd) {
-    const char *db_path="/var/mobile/Library/TCC/TCC.db";
+    const char *db_path=getenv("ROOTTOOLS_TCC_DB");
+    if(!db_path||!db_path[0])db_path="/var/mobile/Library/TCC/TCC.db";
     sqlite3 *db=NULL;
     int rc=sqlite3_open_v2(db_path,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_NOMUTEX,NULL);
+    if(rc!=SQLITE_OK){
+        if(db){sqlite3_close(db);db=NULL;}
+        // iOS commonly keeps TCC.db in WAL mode. A read-only helper can fail
+        // to open the live database if SQLite attempts locking/sidecar access.
+        // Retry as an immutable URI: this is strictly read-only and avoids
+        // creating journal/shm files from the privileged daemon.
+        char uri[1536]={0};
+        int n=snprintf(uri,sizeof(uri),"file:%s?mode=ro&immutable=1",db_path);
+        if(n>0&&(size_t)n<sizeof(uri))
+            rc=sqlite3_open_v2(uri,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_URI|SQLITE_OPEN_NOMUTEX,NULL);
+    }
     if(rc!=SQLITE_OK){if(db)sqlite3_close(db);send_error(fd,503,"TCC database unavailable");return;}
     const char *sql="SELECT service,client,auth_value,auth_reason,last_modified FROM access ORDER BY service,client LIMIT 512";
     sqlite3_stmt *statement=NULL;
