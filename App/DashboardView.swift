@@ -194,6 +194,10 @@ struct DeviceHubView: View {
                         NavigationLink(value: ToolKind.processes) { HubRow(tool: .processes) }
                     }
 
+                    HubSection(title: "Interaction", subtitle: "Observe and control the visible device UI through typed tasks") {
+                        NavigationLink(value: ToolKind.uiAutomation) { HubRow(tool: .uiAutomation) }
+                    }
+
                     HubSection(title: "System", subtitle: "Storage, network and jailbreak runtime") {
                         NavigationLink(value: ToolKind.files) { HubRow(tool: .files) }
                         Divider().padding(.leading, 54)
@@ -450,6 +454,8 @@ private struct RootToolDestination: View {
             PermissionsView()
         } else if tool == .trustedAgents {
             TrustedAgentsView()
+        } else if tool == .uiAutomation {
+            UIAutomationView()
         } else {
             ToolDetailView(tool: tool)
         }

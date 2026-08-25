@@ -19,6 +19,10 @@ int main(void) {
     assert(!strcmp(rt_provider_for_capability("device.runtime.ellekit.observe"), "runtime.ellekit"));
     assert(!strcmp(rt_provider_for_capability("device.task.submit-app-launch"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.task.cancel"), "roottools.execd"));
+    assert(!strcmp(rt_provider_for_capability("device.ui.observe"), "ui.zxtouch"));
+    assert(!strcmp(rt_provider_for_capability("device.ui.tap"), "roottools.execd"));
+    assert(!strcmp(rt_provider_for_capability("device.ui.type"), "roottools.execd"));
+    assert(!strcmp(rt_provider_for_capability("device.ui.swipe"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.principal.list"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.principal.create"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.principal.revoke"), "roottools.execd"));

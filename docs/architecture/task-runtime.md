@@ -38,4 +38,8 @@ Owner UI may view/cancel all tasks. Agent-class callers see only tasks whose sto
 
 The first concrete task executor is `app.launch`. It resolves the app executable, uses the fixed SpringBoard `uiopen` provider, observes the resulting process as the post-condition, retries a bounded number of times, and waits for an unlocked visible UI when necessary.
 
+v0.14 adds `ui.tap`, `ui.type`, and `ui.swipe` task kinds. Before any queued task executes, RootTools re-evaluates the current global capability policy and the current Named Principal grant. Revoking a grant therefore stops work that was queued earlier but has not yet executed.
+
+UI input differs from app launch retry semantics. Once an input sequence has started, an indeterminate failure is terminal rather than automatically retried because a repeated tap/swipe/text insertion could duplicate a side effect.
+
 The legacy `automation_jobs` table/API is retained only as a migration mirror for older clients. New clients use `device.task.submit-app-launch`, `device.task.cancel`, and `/v1/tasks/catalog`.

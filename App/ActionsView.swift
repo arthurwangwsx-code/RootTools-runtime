@@ -257,3 +257,150 @@ struct ActionsView: View {
         await execute { try await DaemonClient.shared.readFile(scope: fileScope, name: name) }
     }
 }
+
+struct UIAutomationView: View {
+    @State private var observation: UIObservation?
+    @State private var tapX = ""
+    @State private var tapY = ""
+    @State private var text = ""
+    @State private var swipeStartX = ""
+    @State private var swipeStartY = ""
+    @State private var swipeEndX = ""
+    @State private var swipeEndY = ""
+    @State private var swipeDuration = "350"
+    @State private var swipeSteps = "8"
+    @State private var running = false
+    @State private var lastReceipt: ActionReceipt?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        Form {
+            Section("Live UI") {
+                if let observation {
+                    LabeledContent("Provider", value: observation.providerId)
+                    LabeledContent("Lock", value: observation.lockState)
+                    LabeledContent("Screen", value: observation.screenState)
+                    LabeledContent("UI ready", value: observation.uiExecutionReady ? "Yes" : "Waiting")
+                    LabeledContent(
+                        "Geometry",
+                        value: "\(Int(observation.screen.width)) × \(Int(observation.screen.height)) @ \(String(format: "%.2g", observation.screen.scale))"
+                    )
+                    LabeledContent("Orientation", value: observation.screen.orientation)
+                } else {
+                    Text("UI observation is unavailable until the input provider is online.")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Button("Refresh observation") { Task { await refreshObservation() } }
+            }
+
+            Section("Tap") {
+                HStack {
+                    TextField("X", text: $tapX).keyboardType(.numberPad)
+                    TextField("Y", text: $tapY).keyboardType(.numberPad)
+                }
+                Button("Queue tap") { Task { await submitTap() } }
+                    .disabled(running)
+                Text("Coordinates use physical screen pixels. If the device is locked or blanked, the task waits instead of bypassing the lock screen.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Type text") {
+                TextField("Text to insert", text: $text, axis: .vertical)
+                    .lineLimit(1...4)
+                Button("Queue text insertion") { Task { await submitType() } }
+                    .disabled(running || text.isEmpty)
+                Text("Text is sent through the typed UI provider only after UI readiness. Partial/indeterminate insertion is never automatically retried.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Swipe") {
+                HStack {
+                    TextField("Start X", text: $swipeStartX).keyboardType(.numberPad)
+                    TextField("Start Y", text: $swipeStartY).keyboardType(.numberPad)
+                }
+                HStack {
+                    TextField("End X", text: $swipeEndX).keyboardType(.numberPad)
+                    TextField("End Y", text: $swipeEndY).keyboardType(.numberPad)
+                }
+                HStack {
+                    TextField("Duration ms", text: $swipeDuration).keyboardType(.numberPad)
+                    TextField("Steps", text: $swipeSteps).keyboardType(.numberPad)
+                }
+                Button("Queue swipe") { Task { await submitSwipe() } }
+                    .disabled(running)
+            }
+
+            if let lastReceipt {
+                Section("Last command") {
+                    LabeledContent("Capability", value: lastReceipt.capabilityId ?? lastReceipt.action)
+                    LabeledContent("Result", value: lastReceipt.result ?? "—")
+                    if let taskID = lastReceipt.output {
+                        LabeledContent("Task") {
+                            Text(taskID).font(.caption2.monospaced()).textSelection(.enabled)
+                        }
+                    }
+                    Text(lastReceipt.message).font(.caption).foregroundStyle(.secondary)
+                }
+            }
+
+            if let errorMessage {
+                Section("Last error") {
+                    Text(errorMessage).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                }
+            }
+        }
+        .navigationTitle("UI Automation")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await refreshObservation() }
+    }
+
+    @MainActor
+    private func refreshObservation() async {
+        do {
+            observation = try await DaemonClient.shared.uiObservation()
+            errorMessage = nil
+            if tapX.isEmpty, let observation { tapX = String(Int(observation.screen.width / 2)) }
+            if tapY.isEmpty, let observation { tapY = String(Int(observation.screen.height / 2)) }
+        } catch {
+            observation = nil
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func run(_ operation: () async throws -> ActionReceipt) async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            let receipt = try await operation()
+            lastReceipt = receipt
+            errorMessage = receipt.ok ? nil : receipt.message
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func submitTap() async {
+        guard let x = Int(tapX), let y = Int(tapY) else { errorMessage = "Tap coordinates must be integers."; return }
+        await run { try await DaemonClient.shared.queueUITap(x: x, y: y) }
+    }
+
+    @MainActor
+    private func submitType() async {
+        await run { try await DaemonClient.shared.queueUIType(text: text) }
+    }
+
+    @MainActor
+    private func submitSwipe() async {
+        guard let sx = Int(swipeStartX), let sy = Int(swipeStartY), let ex = Int(swipeEndX), let ey = Int(swipeEndY),
+              let duration = Int(swipeDuration), let steps = Int(swipeSteps) else {
+            errorMessage = "Swipe coordinates, duration and steps must be integers."; return
+        }
+        await run { try await DaemonClient.shared.queueUISwipe(startX: sx, startY: sy, endX: ex, endY: ey, durationMs: duration, steps: steps) }
+    }
+}

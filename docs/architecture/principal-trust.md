@@ -117,6 +117,8 @@ The owner may grant only compiled R0/R1 capabilities. Every read endpoint and ev
 
 Each grant may optionally carry an expiry timestamp. This makes temporary Network Skill or automation access time-bounded without rotating the principal credential.
 
+Queued work does not freeze authorization forever. The Task Runtime checks the current capability policy and current Principal grant immediately before execution. Revocation or expiry therefore takes effect for already-queued work that has not yet executed.
+
 Host administration adds:
 
 ```bash

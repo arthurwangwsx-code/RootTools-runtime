@@ -175,6 +175,9 @@ class DeviceServiceClient:
     def screen_info(self) -> dict:
         return self.request("GET", "/v1/ui/screen-info")
 
+    def ui_observe(self) -> dict:
+        return self.request("GET", "/v1/ui/observe")
+
     def tcc_permissions(self) -> dict:
         return self.request("GET", "/v1/permissions/tcc")
 
@@ -442,6 +445,19 @@ def build_parser() -> argparse.ArgumentParser:
     fs_list = sub.add_parser("fs-list")
     fs_list.add_argument("scope", choices=("mobile", "bootstrap"))
     sub.add_parser("screen-info")
+    sub.add_parser("ui-observe")
+    ui_tap = sub.add_parser("ui-tap", help="Queue a semantic screen tap task")
+    ui_tap.add_argument("x", type=int)
+    ui_tap.add_argument("y", type=int)
+    ui_type = sub.add_parser("ui-type", help="Queue typed text insertion")
+    ui_type.add_argument("text")
+    ui_swipe = sub.add_parser("ui-swipe", help="Queue a semantic screen swipe task")
+    ui_swipe.add_argument("start_x", type=int)
+    ui_swipe.add_argument("start_y", type=int)
+    ui_swipe.add_argument("end_x", type=int)
+    ui_swipe.add_argument("end_y", type=int)
+    ui_swipe.add_argument("--duration-ms", type=int, default=350)
+    ui_swipe.add_argument("--steps", type=int, default=8)
     sub.add_parser("tcc")
     sub.add_parser("network-catalog")
     events = sub.add_parser("events")
@@ -555,6 +571,26 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.fs_list(args.scope)
     if args.command == "screen-info":
         return client.screen_info()
+    if args.command == "ui-observe":
+        return client.ui_observe()
+    if args.command == "ui-tap":
+        return client.action("device.ui.tap", {"x": args.x, "y": args.y}, request_id=args.request_id, expected_revision=args.expected_revision)
+    if args.command == "ui-type":
+        return client.action("device.ui.type", {"text": args.text}, request_id=args.request_id, expected_revision=args.expected_revision)
+    if args.command == "ui-swipe":
+        return client.action(
+            "device.ui.swipe",
+            {
+                "startX": args.start_x,
+                "startY": args.start_y,
+                "endX": args.end_x,
+                "endY": args.end_y,
+                "durationMs": args.duration_ms,
+                "steps": args.steps,
+            },
+            request_id=args.request_id,
+            expected_revision=args.expected_revision,
+        )
     if args.command == "tcc":
         return client.tcc_permissions()
     if args.command == "network-catalog":

@@ -135,6 +135,36 @@ private struct TaskCancelBody: Codable {
     var confirmed: Bool
 }
 
+private struct UITapBody: Codable {
+    var capabilityId: String
+    var x: Int
+    var y: Int
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
+private struct UITypeBody: Codable {
+    var capabilityId: String
+    var text: String
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
+private struct UISwipeBody: Codable {
+    var capabilityId: String
+    var startX: Int
+    var startY: Int
+    var endX: Int
+    var endY: Int
+    var durationMs: Int
+    var steps: Int
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
 enum DaemonError: LocalizedError {
     case invalidResponse
     case http(Int, String?)
@@ -429,6 +459,46 @@ final class DaemonClient {
     func taskCatalog() async throws -> DeviceTaskCatalog {
         let data = try await request(path: "/v1/tasks/catalog")
         return try decoder.decode(DeviceTaskCatalog.self, from: data)
+    }
+
+    func uiObservation() async throws -> UIObservation {
+        let data = try await request(path: "/v1/ui/observe")
+        return try decoder.decode(UIObservation.self, from: data)
+    }
+
+    func queueUITap(x: Int, y: Int) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: UITapBody(
+                capabilityId: "device.ui.tap", x: x, y: y,
+                requestId: UUID().uuidString, caller: caller, confirmed: false
+            ),
+            response: ActionReceipt.self
+        )
+    }
+
+    func queueUIType(text: String) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: UITypeBody(
+                capabilityId: "device.ui.type", text: text,
+                requestId: UUID().uuidString, caller: caller, confirmed: false
+            ),
+            response: ActionReceipt.self
+        )
+    }
+
+    func queueUISwipe(startX: Int, startY: Int, endX: Int, endY: Int, durationMs: Int, steps: Int) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: UISwipeBody(
+                capabilityId: "device.ui.swipe",
+                startX: startX, startY: startY, endX: endX, endY: endY,
+                durationMs: durationMs, steps: steps,
+                requestId: UUID().uuidString, caller: caller, confirmed: false
+            ),
+            response: ActionReceipt.self
+        )
     }
 
     func inspectApp(bundleID: String) async throws -> ApplicationInspection {

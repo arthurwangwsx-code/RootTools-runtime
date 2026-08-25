@@ -64,6 +64,8 @@ Implement `observe -> act -> observe -> verify`: Accessibility first, screenshot
 
 Lock-aware foundation started in v0.4: typed lock/display observation, headless-vs-UI readiness, and a durable `queue until unlock` execution path are implemented before broader foreground/virtual-scene automation. The daemon never bypasses the device passcode; locked UI work is deferred while headless work remains available.
 
+v0.14 moves the first input operations behind semantic capability IDs and the durable Task Runtime. `device.ui.observe`, `device.ui.tap`, `device.ui.type`, and `device.ui.swipe` use the fixed ZXTouch adapter internally. Input tasks re-check grants/policy at execution time and wait for an unlocked visible UI. Coordinate input is explicitly the current fallback layer; selector/accessibility observation and visual effect verification remain the next P4 depth increment.
+
 ### P5 — Agent Device Ops
 
 Expose stable verbs such as `device_info`, `device_app_launch`, `device_process_inspect`, `device_fs_read`, and `device_runtime_inspect`. The Agent never receives RootTools internals or arbitrary shell access.

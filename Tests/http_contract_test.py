@@ -151,6 +151,7 @@ def main() -> int:
             assert hello["features"]["namedPrincipals"] is True
             assert hello["features"]["durableIdempotency"] is True
             assert hello["features"]["durableTasks"] is True
+            assert hello["features"]["semanticUIAutomation"] is True
             assert hello["features"]["expectedRevision"] is True
             assert hello["features"]["rawPrivilegedShell"] is False
             assert hello["features"]["providerRegistry"] is True
@@ -631,6 +632,62 @@ def main() -> int:
             status, task_catalog = request(port, args.agent_token, "GET", "/v1/tasks/catalog")
             task_row = next(item for item in task_catalog["tasks"] if item["taskId"] == task_id)
             assert task_row["state"] == "cancelled"
+
+            invalid_tap = action(
+                port,
+                args.agent_token,
+                "device.ui.tap",
+                parameters={"x": -1, "y": 20},
+            )
+            assert invalid_tap["ok"] is False
+
+            ui_tap = action(
+                port,
+                args.agent_token,
+                "device.ui.tap",
+                parameters={"x": 120, "y": 240},
+            )
+            ui_type = action(
+                port,
+                args.agent_token,
+                "device.ui.type",
+                parameters={"text": "hello"},
+            )
+            ui_swipe = action(
+                port,
+                args.agent_token,
+                "device.ui.swipe",
+                parameters={
+                    "startX": 100,
+                    "startY": 400,
+                    "endX": 100,
+                    "endY": 100,
+                    "durationMs": 350,
+                    "steps": 8,
+                },
+            )
+            assert ui_tap["ok"] and ui_type["ok"] and ui_swipe["ok"]
+            ui_task_ids = {ui_tap["output"], ui_type["output"], ui_swipe["output"]}
+            time.sleep(1.1)
+            status, task_catalog = request(port, args.agent_token, "GET", "/v1/tasks/catalog")
+            assert status == 200
+            ui_rows = {item["taskId"]: item for item in task_catalog["tasks"] if item["taskId"] in ui_task_ids}
+            assert set(ui_rows) == ui_task_ids
+            assert {item["kind"] for item in ui_rows.values()} == {"ui.tap", "ui.type", "ui.swipe"}
+            assert all(item["state"] == "waiting_for_unlock" for item in ui_rows.values())
+            assert all(item["requiresUI"] is True for item in ui_rows.values())
+
+            for ui_task_id in ui_task_ids:
+                assert action(
+                    port,
+                    args.agent_token,
+                    "device.task.cancel",
+                    parameters={"taskId": ui_task_id},
+                )["ok"] is True
+
+            status, ui_observe = request(port, args.agent_token, "GET", "/v1/ui/observe")
+            assert status == 503
+            assert ui_observe["error"] == "UI observation provider unavailable"
 
             status, fs_scopes = request(port, args.agent_token, "GET", "/v1/fs/scopes")
             assert status == 200

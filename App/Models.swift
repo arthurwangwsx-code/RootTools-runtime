@@ -122,6 +122,22 @@ struct DeviceTaskCatalog: Codable, Equatable {
     var count: Int
 }
 
+struct UIObservationScreen: Codable, Equatable {
+    var width: Double
+    var height: Double
+    var scale: Double
+    var orientation: String
+}
+
+struct UIObservation: Codable, Equatable {
+    var schemaVersion: Int
+    var providerId: String
+    var lockState: String
+    var screenState: String
+    var uiExecutionReady: Bool
+    var screen: UIObservationScreen
+}
+
 struct TextPayload: Codable {
     var ok: Bool
     var output: String
@@ -442,6 +458,7 @@ enum FileScope: String, CaseIterable, Identifiable {
 
 enum ToolKind: String, CaseIterable, Identifiable {
     case runtime
+    case uiAutomation
     case providers
     case packages
     case apps
@@ -459,6 +476,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .runtime: return "Jailbreak Runtime"
+        case .uiAutomation: return "UI Automation"
         case .providers: return "Providers"
         case .packages: return "Packages"
         case .apps: return "Applications"
@@ -476,6 +494,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .runtime: return "Dopamine · rootless · helper"
+        case .uiAutomation: return "Observe · tap · type · swipe · lock-aware"
         case .providers: return "Dopamine · TrollStore · Frida · UI"
         case .packages: return "DEB · IPA · TIPA staging and install"
         case .apps: return "Installed application inventory"
@@ -493,6 +512,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .runtime: return "lock.open.fill"
+        case .uiAutomation: return "hand.tap.fill"
         case .providers: return "point.3.connected.trianglepath.dotted"
         case .packages: return "shippingbox.fill"
         case .apps: return "square.grid.2x2.fill"
@@ -510,6 +530,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var endpoint: String {
         switch self {
         case .runtime: return "/v1/runtime"
+        case .uiAutomation: return "/v1/ui/observe"
         case .providers: return "/v1/providers/catalog"
         case .packages: return "/v1/packages/catalog"
         case .apps: return "/v1/apps"

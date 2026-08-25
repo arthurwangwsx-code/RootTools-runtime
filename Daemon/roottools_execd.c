@@ -36,7 +36,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.13.0"
+#define VERSION "0.14.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -102,6 +102,22 @@ typedef struct {
     char detail[256];
 } RTLedgerReservation;
 
+static int sqlite_table_has_column(sqlite3 *db, const char *table, const char *column) {
+    char sql[256]={0};
+    int n=snprintf(sql,sizeof(sql),"PRAGMA table_info(%s)",table);
+    if(n<=0||(size_t)n>=sizeof(sql))return 0;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,sql,-1,&statement,NULL);
+    if(rc!=SQLITE_OK)return 0;
+    int found=0;
+    while((rc=sqlite3_step(statement))==SQLITE_ROW){
+        const char *name=(const char*)sqlite3_column_text(statement,1);
+        if(name&&!strcmp(name,column)){found=1;break;}
+    }
+    sqlite3_finalize(statement);
+    return found;
+}
+
 static int ledger_open(sqlite3 **db_out) {
     sqlite3 *db=NULL;
     int rc=sqlite3_open_v2(
@@ -158,6 +174,7 @@ static int ledger_open(sqlite3 **db_out) {
         "caller TEXT NOT NULL,"
         "state TEXT NOT NULL,"
         "requires_ui INTEGER NOT NULL DEFAULT 0,"
+        "payload_json TEXT NOT NULL DEFAULT '{}',"
         "attempt_count INTEGER NOT NULL DEFAULT 0,"
         "created_at INTEGER NOT NULL,"
         "updated_at INTEGER NOT NULL,"
@@ -166,14 +183,19 @@ static int ledger_open(sqlite3 **db_out) {
         ");"
         "CREATE INDEX IF NOT EXISTS device_tasks_state_idx ON device_tasks(state,created_at);"
         "CREATE INDEX IF NOT EXISTS device_tasks_caller_idx ON device_tasks(caller,created_at);"
-        "INSERT OR IGNORE INTO device_tasks(task_id,capability_id,kind,target,caller,state,requires_ui,attempt_count,created_at,updated_at,result,error) "
+        "INSERT OR IGNORE INTO device_tasks(task_id,capability_id,kind,target,caller,state,requires_ui,payload_json,attempt_count,created_at,updated_at,result,error) "
         "SELECT job_id,'device.app.launch',kind,target,'legacy:automation',"
-        "CASE state WHEN 'pending' THEN 'queued' ELSE state END,1,attempt_count,created_at,updated_at,result,error FROM automation_jobs;"
+        "CASE state WHEN 'pending' THEN 'queued' ELSE state END,1,'{}',attempt_count,created_at,updated_at,result,error FROM automation_jobs;"
         "INSERT OR IGNORE INTO service_meta(key,value) VALUES('revision',0);";
     char *error=NULL;
     rc=sqlite3_exec(db,schema,NULL,NULL,&error);
     sqlite3_free(error);
     if(rc!=SQLITE_OK){sqlite3_close(db);return 0;}
+    if(!sqlite_table_has_column(db,"device_tasks","payload_json")){
+        rc=sqlite3_exec(db,"ALTER TABLE device_tasks ADD COLUMN payload_json TEXT NOT NULL DEFAULT '{}'",NULL,NULL,&error);
+        sqlite3_free(error);error=NULL;
+        if(rc!=SQLITE_OK){sqlite3_close(db);return 0;}
+    }
     *db_out=db;
     return 1;
 }
@@ -442,14 +464,44 @@ static int task_enqueue_app_launch(const char *task_id, const char *bundle_id, c
     sqlite3 *db=NULL;if(!ledger_open(&db))return 0;
     sqlite3_stmt *statement=NULL;
     int rc=sqlite3_prepare_v2(db,
-        "INSERT INTO device_tasks(task_id,capability_id,kind,target,caller,state,requires_ui,attempt_count,created_at,updated_at) "
-        "VALUES(?1,'device.app.launch','app.launch',?2,?3,'queued',1,0,?4,?4)",
+        "INSERT INTO device_tasks(task_id,capability_id,kind,target,caller,state,requires_ui,payload_json,attempt_count,created_at,updated_at) "
+        "VALUES(?1,'device.app.launch','app.launch',?2,?3,'queued',1,?4,0,?5,?5)",
         -1,&statement,NULL);
     if(rc==SQLITE_OK){
+        char escaped[512]={0},payload[640]={0};json_escape(bundle_id,escaped,sizeof(escaped));
+        snprintf(payload,sizeof(payload),"{\"bundleID\":\"%s\"}",escaped);
         sqlite3_bind_text(statement,1,task_id,-1,SQLITE_TRANSIENT);
         sqlite3_bind_text(statement,2,bundle_id,-1,SQLITE_TRANSIENT);
         sqlite3_bind_text(statement,3,caller,-1,SQLITE_TRANSIENT);
-        sqlite3_bind_int64(statement,4,(sqlite3_int64)time(NULL));
+        sqlite3_bind_text(statement,4,payload,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_int64(statement,5,(sqlite3_int64)time(NULL));
+        rc=sqlite3_step(statement);
+    }
+    sqlite3_finalize(statement);sqlite3_close(db);return rc==SQLITE_DONE;
+}
+
+static int task_enqueue_ui_action(
+    const char *task_id,
+    const char *capability_id,
+    const char *kind,
+    const char *target,
+    const char *caller,
+    const char *payload_json
+) {
+    sqlite3 *db=NULL;if(!ledger_open(&db))return 0;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "INSERT INTO device_tasks(task_id,capability_id,kind,target,caller,state,requires_ui,payload_json,attempt_count,created_at,updated_at) "
+        "VALUES(?1,?2,?3,?4,?5,'queued',1,?6,0,?7,?7)",
+        -1,&statement,NULL);
+    if(rc==SQLITE_OK){
+        sqlite3_bind_text(statement,1,task_id,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement,2,capability_id,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement,3,kind,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement,4,target,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement,5,caller,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement,6,payload_json,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_int64(statement,7,(sqlite3_int64)time(NULL));
         rc=sqlite3_step(statement);
     }
     sqlite3_finalize(statement);sqlite3_close(db);return rc==SQLITE_DONE;
@@ -486,12 +538,13 @@ static int task_cancel(const char *task_id, const char *caller, int owner) {
 
 static int task_next(
     char *task_id,size_t task_cap,char *kind,size_t kind_cap,char *target,size_t target_cap,
-    char *caller,size_t caller_cap,int *attempts,int *requires_ui,char *state,size_t state_cap
+    char *caller,size_t caller_cap,char *capability,size_t capability_cap,char *payload,size_t payload_cap,
+    int *attempts,int *requires_ui,char *state,size_t state_cap
 ) {
     sqlite3 *db=NULL;if(!ledger_open(&db))return 0;
     sqlite3_stmt *statement=NULL;
     int rc=sqlite3_prepare_v2(db,
-        "SELECT task_id,kind,target,caller,attempt_count,requires_ui,state FROM device_tasks "
+        "SELECT task_id,kind,target,caller,capability_id,payload_json,attempt_count,requires_ui,state FROM device_tasks "
         "WHERE state IN ('queued','waiting_for_unlock','retrying') ORDER BY created_at LIMIT 1",
         -1,&statement,NULL);
     if(rc==SQLITE_OK)rc=sqlite3_step(statement);
@@ -499,11 +552,13 @@ static int task_next(
     if(rc==SQLITE_ROW){
         const char *id=(const char*)sqlite3_column_text(statement,0),*k=(const char*)sqlite3_column_text(statement,1);
         const char *t=(const char*)sqlite3_column_text(statement,2),*c=(const char*)sqlite3_column_text(statement,3);
-        const char *s=(const char*)sqlite3_column_text(statement,6);
-        if(id&&k&&t&&c&&s&&strlen(id)<task_cap&&strlen(k)<kind_cap&&strlen(t)<target_cap&&strlen(c)<caller_cap&&strlen(s)<state_cap){
+        const char *capability_id=(const char*)sqlite3_column_text(statement,4),*payload_json=(const char*)sqlite3_column_text(statement,5);
+        const char *s=(const char*)sqlite3_column_text(statement,8);
+        if(id&&k&&t&&c&&capability_id&&payload_json&&s&&strlen(id)<task_cap&&strlen(k)<kind_cap&&strlen(t)<target_cap&&strlen(c)<caller_cap&&strlen(capability_id)<capability_cap&&strlen(payload_json)<payload_cap&&strlen(s)<state_cap){
             snprintf(task_id,task_cap,"%s",id);snprintf(kind,kind_cap,"%s",k);snprintf(target,target_cap,"%s",t);
-            snprintf(caller,caller_cap,"%s",c);snprintf(state,state_cap,"%s",s);
-            *attempts=sqlite3_column_int(statement,4);*requires_ui=sqlite3_column_int(statement,5);ok=1;
+            snprintf(caller,caller_cap,"%s",c);snprintf(capability,capability_cap,"%s",capability_id);
+            snprintf(payload,payload_cap,"%s",payload_json);snprintf(state,state_cap,"%s",s);
+            *attempts=sqlite3_column_int(statement,6);*requires_ui=sqlite3_column_int(statement,7);ok=1;
         }
     }
     sqlite3_finalize(statement);sqlite3_close(db);return ok;
@@ -1745,7 +1800,7 @@ static void send_hello(int fd, RTAuthRole role, const char *caller) {
         "\"authenticatedRole\":\"%s\",\"authenticatedCaller\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
         "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
-        "\"expectedRevision\":true,\"eventAudit\":true,\"durableTasks\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
+        "\"expectedRevision\":true,\"eventAudit\":true,\"durableTasks\":true,\"semanticUIAutomation\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),escaped_caller,machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
@@ -1907,6 +1962,131 @@ static int zxtouch_device_info_value(int subtask, char *out, size_t cap) {
     while(*payload==' '||*payload=='\t')payload++;
     size_t length=strcspn(payload,"\r\n"); if(length==0||length>=cap)return 0;
     memcpy(out,payload,length); out[length]=0; return 1;
+}
+
+static int send_all_bytes(int fd, const char *bytes, size_t length) {
+    size_t sent=0;
+    while(sent<length){
+        ssize_t n=send(fd,bytes+sent,length-sent,0);
+        if(n<0&&errno==EINTR)continue;
+        if(n<=0)return 0;
+        sent+=(size_t)n;
+    }
+    return 1;
+}
+
+static int zxtouch_connect(void) {
+    int fd=socket(AF_INET,SOCK_STREAM,0);if(fd<0)return -1;
+    struct timeval timeout={.tv_sec=2,.tv_usec=0};
+    setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&timeout,sizeof(timeout));
+    setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&timeout,sizeof(timeout));
+    struct sockaddr_in addr={0};addr.sin_family=AF_INET;addr.sin_port=htons(6000);addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
+    if(connect(fd,(struct sockaddr*)&addr,sizeof(addr))!=0){close(fd);return -1;}
+    return fd;
+}
+
+static int zxtouch_command_ok(const char *request) {
+    int fd=zxtouch_connect();if(fd<0)return 0;
+    size_t length=strlen(request);
+    if(!send_all_bytes(fd,request,length)){close(fd);return 0;}
+    char response[1024]={0};ssize_t n=recv(fd,response,sizeof(response)-1,0);close(fd);
+    return n>0&&response[0]=='0';
+}
+
+static int zxtouch_screen_geometry(int *width, int *height) {
+    char size_value[128]={0};
+    if(!zxtouch_device_info_value(1,size_value,sizeof(size_value)))return 0;
+    char *save=NULL,*w=strtok_r(size_value,";",&save),*h=strtok_r(NULL,";",&save);
+    if(!w||!h)return 0;
+    char *wend=NULL,*hend=NULL;double wd=strtod(w,&wend),hd=strtod(h,&hend);
+    if(wend==w||hend==h||wd<=0||hd<=0||wd>100000||hd>100000)return 0;
+    *width=(int)wd;*height=(int)hd;return 1;
+}
+
+static int zxtouch_point_valid(int x, int y) {
+    int width=0,height=0;
+    return zxtouch_screen_geometry(&width,&height)&&x>=0&&y>=0&&x<width&&y<height;
+}
+
+static int zxtouch_touch_event(int fd, int touch_type, int finger, int x, int y) {
+    if(touch_type<0||touch_type>2||finger<0||finger>19||x<0||y<0||x>9999||y>9999)return 0;
+    char request[64]={0};
+    int n=snprintf(request,sizeof(request),"101%d%02d%05d%05d\r\n",touch_type,finger,x*10,y*10);
+    return n>0&&(size_t)n<sizeof(request)&&send_all_bytes(fd,request,(size_t)n);
+}
+
+static int zxtouch_tap_point(int x, int y) {
+    if(!zxtouch_point_valid(x,y))return 0;
+    int fd=zxtouch_connect();if(fd<0)return 0;
+    int ok=zxtouch_touch_event(fd,1,0,x,y);
+    if(ok)usleep(80000);
+    if(ok)ok=zxtouch_touch_event(fd,0,0,x,y);
+    if(ok)usleep(50000);
+    close(fd);
+    int width=0,height=0;
+    return ok&&zxtouch_screen_geometry(&width,&height);
+}
+
+static int utf8_char_length(unsigned char lead) {
+    if(lead<0x80)return 1;
+    if((lead&0xE0)==0xC0)return 2;
+    if((lead&0xF0)==0xE0)return 3;
+    if((lead&0xF8)==0xF0)return 4;
+    return 0;
+}
+
+static int zxtouch_insert_text(const char *text) {
+    size_t length=text?strlen(text):0;
+    if(!length||length>1024)return 0;
+    size_t offset=0;int count=0;
+    while(offset<length){
+        unsigned char lead=(unsigned char)text[offset];
+        int char_len=utf8_char_length(lead);
+        if(char_len<=0||offset+(size_t)char_len>length||count>=256)return 0;
+        for(int i=1;i<char_len;i++)if(((unsigned char)text[offset+(size_t)i]&0xC0)!=0x80)return 0;
+        if(char_len==1&&(lead<0x20||lead==0x7f||lead=='\r'||lead=='\n'))return 0;
+        char character[8]={0};memcpy(character,text+offset,(size_t)char_len);
+        char request[64]={0};int n=snprintf(request,sizeof(request),"241;;%s\r\n",character);
+        if(n<=0||(size_t)n>=sizeof(request)||!zxtouch_command_ok(request))return 0;
+        offset+=(size_t)char_len;count++;
+    }
+    return 1;
+}
+
+static int zxtouch_swipe_points(int sx,int sy,int ex,int ey,int duration_ms,int steps) {
+    if(duration_ms<50||duration_ms>5000||steps<1||steps>60||!zxtouch_point_valid(sx,sy)||!zxtouch_point_valid(ex,ey))return 0;
+    int fd=zxtouch_connect();if(fd<0)return 0;
+    int interval_us=(duration_ms*1000)/(steps+1);
+    int ok=zxtouch_touch_event(fd,1,1,sx,sy);
+    if(ok)usleep((useconds_t)interval_us);
+    for(int i=1;ok&&i<=steps;i++){
+        double progress=(double)i/(double)(steps+1);
+        int x=(int)(sx+(ex-sx)*progress),y=(int)(sy+(ey-sy)*progress);
+        ok=zxtouch_touch_event(fd,2,1,x,y);
+        if(ok)usleep((useconds_t)interval_us);
+    }
+    if(ok)ok=zxtouch_touch_event(fd,0,1,ex,ey);
+    close(fd);
+    int width=0,height=0;
+    return ok&&zxtouch_screen_geometry(&width,&height);
+}
+
+static void send_ui_observe(int fd) {
+    char size_value[128]={0},orientation_value[128]={0},scale_value[128]={0};
+    if(!zxtouch_device_info_value(1,size_value,sizeof(size_value))||
+       !zxtouch_device_info_value(2,orientation_value,sizeof(orientation_value))||
+       !zxtouch_device_info_value(3,scale_value,sizeof(scale_value))){send_error(fd,503,"UI observation provider unavailable");return;}
+    char *save=NULL,*w=strtok_r(size_value,";",&save),*h=strtok_r(NULL,";",&save);
+    if(!w||!h){send_error(fd,500,"invalid UI geometry");return;}
+    RTLockSnapshot snapshot=device_lock_snapshot();
+    char orientation[256]={0};json_escape(orientation_value,orientation,sizeof(orientation));
+    char response[2048]={0};
+    snprintf(response,sizeof(response),
+        "{\"schemaVersion\":1,\"providerId\":\"ui.zxtouch\",\"lockState\":\"%s\",\"screenState\":\"%s\",\"uiExecutionReady\":%s,"
+        "\"screen\":{\"width\":%.0f,\"height\":%.0f,\"scale\":%.4g,\"orientation\":\"%s\"}}",
+        lock_state_name(snapshot),screen_state_name(snapshot),ui_execution_ready(snapshot)?"true":"false",
+        strtod(w,NULL),strtod(h,NULL),strtod(scale_value,NULL),orientation);
+    send_response(fd,200,"application/json",response);
 }
 
 static void send_ui_screen_info(int fd) {
@@ -2265,6 +2445,76 @@ static void execute_principal_ungrant(const char *body, RTActionExecution *execu
     snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"grant is absent":"grant remains active");
 }
 
+static int ui_text_valid(const char *text) {
+    size_t length=text?strlen(text):0;
+    if(!length||length>1024)return 0;
+    for(size_t i=0;i<length;i++){
+        unsigned char c=(unsigned char)text[i];
+        if(c<0x20||c==0x7f)return 0;
+    }
+    return 1;
+}
+
+static void execute_ui_tap_submit(const char *body, const char *task_id, const char *caller, RTActionExecution *execution) {
+    long x=0,y=0;
+    if(!json_get_int(body,"x",&x)||!json_get_int(body,"y",&y)||x<0||y<0||x>100000||y>100000){
+        snprintf(execution->message,sizeof(execution->message),"x and y must be non-negative integer screen coordinates");return;
+    }
+    char payload[256]={0},target[128]={0},state[64]={0};
+    snprintf(payload,sizeof(payload),"{\"x\":%ld,\"y\":%ld}",x,y);
+    snprintf(target,sizeof(target),"point=%ld,%ld",x,y);
+    snprintf(execution->target,sizeof(execution->target),"task=%s %s",task_id,target);
+    execution->executed=1;execution->post_checked=1;
+    execution->post_passed=task_enqueue_ui_action(task_id,"device.ui.tap","ui.tap",target,caller,payload)&&
+        task_state(task_id,state,sizeof(state))&&!strcmp(state,"queued");
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"queued":"failed");
+    snprintf(execution->message,sizeof(execution->message),execution->ok?"UI tap task queued":"UI tap task could not be persisted");
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"task is durable and queued":"task persistence verification failed");
+    if(execution->ok)execution->output=strdup(task_id);
+}
+
+static void execute_ui_type_submit(const char *body, const char *task_id, const char *caller, RTActionExecution *execution) {
+    char text[1025]={0};
+    if(!json_get_string(body,"text",text,sizeof(text))||!ui_text_valid(text)){
+        snprintf(execution->message,sizeof(execution->message),"text must contain 1-1024 bytes without control characters");return;
+    }
+    char escaped[2049]={0},payload[2304]={0},state[64]={0},target[128]={0};
+    json_escape(text,escaped,sizeof(escaped));
+    snprintf(payload,sizeof(payload),"{\"text\":\"%s\"}",escaped);
+    snprintf(target,sizeof(target),"text-bytes=%zu",strlen(text));
+    snprintf(execution->target,sizeof(execution->target),"task=%s %s",task_id,target);
+    execution->executed=1;execution->post_checked=1;
+    execution->post_passed=task_enqueue_ui_action(task_id,"device.ui.type","ui.type",target,caller,payload)&&
+        task_state(task_id,state,sizeof(state))&&!strcmp(state,"queued");
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"queued":"failed");
+    snprintf(execution->message,sizeof(execution->message),execution->ok?"UI text task queued":"UI text task could not be persisted");
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"task is durable and queued":"task persistence verification failed");
+    if(execution->ok)execution->output=strdup(task_id);
+}
+
+static void execute_ui_swipe_submit(const char *body, const char *task_id, const char *caller, RTActionExecution *execution) {
+    long sx=0,sy=0,ex=0,ey=0,duration=0,steps=0;
+    if(!json_get_int(body,"startX",&sx)||!json_get_int(body,"startY",&sy)||!json_get_int(body,"endX",&ex)||!json_get_int(body,"endY",&ey)||
+       !json_get_int(body,"durationMs",&duration)||!json_get_int(body,"steps",&steps)||
+       sx<0||sy<0||ex<0||ey<0||sx>100000||sy>100000||ex>100000||ey>100000||duration<50||duration>5000||steps<1||steps>60){
+        snprintf(execution->message,sizeof(execution->message),"Swipe requires valid integer coordinates, durationMs 50-5000 and steps 1-60");return;
+    }
+    char payload[512]={0},state[64]={0},target[192]={0};
+    snprintf(payload,sizeof(payload),"{\"startX\":%ld,\"startY\":%ld,\"endX\":%ld,\"endY\":%ld,\"durationMs\":%ld,\"steps\":%ld}",sx,sy,ex,ey,duration,steps);
+    snprintf(target,sizeof(target),"swipe=%ld,%ld->%ld,%ld",sx,sy,ex,ey);
+    snprintf(execution->target,sizeof(execution->target),"task=%s %s",task_id,target);
+    execution->executed=1;execution->post_checked=1;
+    execution->post_passed=task_enqueue_ui_action(task_id,"device.ui.swipe","ui.swipe",target,caller,payload)&&
+        task_state(task_id,state,sizeof(state))&&!strcmp(state,"queued");
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"queued":"failed");
+    snprintf(execution->message,sizeof(execution->message),execution->ok?"UI swipe task queued":"UI swipe task could not be persisted");
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"task is durable and queued":"task persistence verification failed");
+    if(execution->ok)execution->output=strdup(task_id);
+}
+
 static void execute_queue_app_launch(const char *body, const char *task_id, const char *caller, RTActionExecution *execution) {
     char bundle[256]={0};
     if(!json_get_string(body,"bundleID",bundle,sizeof(bundle))||!safe_bundle_id(bundle)){
@@ -2337,28 +2587,76 @@ static void automation_recover_incomplete_jobs(void) {
 
 static void automation_tick(void) {
     RTLockSnapshot snapshot=device_lock_snapshot();
-    char task_id[128]={0},kind[64]={0},target[256]={0},caller[192]={0},state[64]={0};int attempts=0,requires_ui=0;
-    if(!task_next(task_id,sizeof(task_id),kind,sizeof(kind),target,sizeof(target),caller,sizeof(caller),&attempts,&requires_ui,state,sizeof(state)))return;
+    char task_id[128]={0},kind[64]={0},target[256]={0},caller[192]={0},capability_id[256]={0},payload[2304]={0},state[64]={0};
+    int attempts=0,requires_ui=0;
+    if(!task_next(task_id,sizeof(task_id),kind,sizeof(kind),target,sizeof(target),caller,sizeof(caller),capability_id,sizeof(capability_id),payload,sizeof(payload),&attempts,&requires_ui,state,sizeof(state)))return;
+
+    const RTCapability *task_capability=rt_capability_find(capability_id);
+    RTPolicyDecision task_policy=rt_policy_evaluate(task_capability,0);
+    if(!task_capability||!task_policy.allowed||!principal_grant_allows(caller,capability_id)){
+        task_update(task_id,"failed",NULL,"task authorization no longer permits execution",0);
+        if(!strcmp(kind,"app.launch"))(void)automation_update_job(task_id,"failed",NULL,"task authorization no longer permits execution",0);
+        return;
+    }
     if(requires_ui&&!ui_execution_ready(snapshot)){
         if(strcmp(state,"waiting_for_unlock"))task_update(task_id,"waiting_for_unlock",NULL,"waiting for unlocked visible UI",0);
         return;
     }
-    if(strcmp(kind,"app.launch")){task_update(task_id,"failed",NULL,"unsupported task kind",1);(void)automation_update_job(task_id,"failed",NULL,"unsupported task kind",1);return;}
-    if(!safe_bundle_id(target)){task_update(task_id,"failed",NULL,"invalid stored bundle identifier",1);(void)automation_update_job(task_id,"failed",NULL,"invalid stored bundle identifier",1);return;}
-    task_update(task_id,"running",NULL,NULL,0);(void)automation_update_job(task_id,"running",NULL,NULL,0);
-    char executable[256]={0};
-    if(!executable_for_bundle(target,executable,sizeof(executable))){
+
+    const char *execution_provider=!strcmp(kind,"app.launch")?"ui.springboard":
+        (!strncmp(kind,"ui.",3)?"ui.zxtouch":NULL);
+    const RTProvider *provider=execution_provider?rt_provider_find(execution_provider):NULL;
+    if(!provider||!rt_provider_available(provider)){
         const char *next=attempts+1>=3?"failed":"retrying";
-        task_update(task_id,next,NULL,"could not resolve app executable",1);
-        (void)automation_update_job(task_id,attempts+1>=3?"failed":"pending",NULL,"could not resolve app executable",1);return;
+        task_update(task_id,next,NULL,"required task execution provider is unavailable",1);
+        if(!strcmp(kind,"app.launch"))(void)automation_update_job(task_id,attempts+1>=3?"failed":"pending",NULL,"required task execution provider is unavailable",1);
+        return;
     }
-    char *argv[]={(char*)"uiopen",(char*)"--bundleid",target,NULL};
-    int rc=fixed_spawn_wait("/var/jb/usr/bin/uiopen",argv,NULL,0);
-    int passed=rc==0&&wait_process_name(executable,1);
-    if(passed){task_update(task_id,"completed","application process observed",NULL,1);(void)automation_update_job(task_id,"completed","application process observed",NULL,1);return;}
-    const char *next=attempts+1>=3?"failed":"retrying";
-    task_update(task_id,next,NULL,"launch failed or process was not observed",1);
-    (void)automation_update_job(task_id,attempts+1>=3?"failed":"pending",NULL,"launch failed or process was not observed",1);
+
+    task_update(task_id,"running",NULL,NULL,0);
+    if(!strcmp(kind,"app.launch")){
+        (void)automation_update_job(task_id,"running",NULL,NULL,0);
+        if(!safe_bundle_id(target)){task_update(task_id,"failed",NULL,"invalid stored bundle identifier",1);(void)automation_update_job(task_id,"failed",NULL,"invalid stored bundle identifier",1);return;}
+        char executable[256]={0};
+        if(!executable_for_bundle(target,executable,sizeof(executable))){
+            const char *next=attempts+1>=3?"failed":"retrying";
+            task_update(task_id,next,NULL,"could not resolve app executable",1);
+            (void)automation_update_job(task_id,attempts+1>=3?"failed":"pending",NULL,"could not resolve app executable",1);return;
+        }
+        char *argv[]={(char*)"uiopen",(char*)"--bundleid",target,NULL};
+        int rc=fixed_spawn_wait("/var/jb/usr/bin/uiopen",argv,NULL,0);
+        int passed=rc==0&&wait_process_name(executable,1);
+        if(passed){task_update(task_id,"completed","application process observed",NULL,1);(void)automation_update_job(task_id,"completed","application process observed",NULL,1);return;}
+        const char *next=attempts+1>=3?"failed":"retrying";
+        task_update(task_id,next,NULL,"launch failed or process was not observed",1);
+        (void)automation_update_job(task_id,attempts+1>=3?"failed":"pending",NULL,"launch failed or process was not observed",1);
+        return;
+    }
+
+    if(!strcmp(kind,"ui.tap")){
+        long x=0,y=0;
+        int ok=json_get_int(payload,"x",&x)&&json_get_int(payload,"y",&y)&&zxtouch_tap_point((int)x,(int)y);
+        task_update(task_id,ok?"completed":"failed",ok?"tap sequence delivered and UI adapter re-observed":NULL,
+            ok?NULL:"tap effect is indeterminate; task was not retried",1);
+        return;
+    }
+    if(!strcmp(kind,"ui.type")){
+        char text[1025]={0};
+        int ok=json_get_string(payload,"text",text,sizeof(text))&&ui_text_valid(text)&&zxtouch_insert_text(text);
+        task_update(task_id,ok?"completed":"failed",ok?"ZXTouch acknowledged all text characters":NULL,
+            ok?NULL:"text insertion may be partial; task was not retried",1);
+        return;
+    }
+    if(!strcmp(kind,"ui.swipe")){
+        long sx=0,sy=0,ex=0,ey=0,duration=0,steps=0;
+        int ok=json_get_int(payload,"startX",&sx)&&json_get_int(payload,"startY",&sy)&&json_get_int(payload,"endX",&ex)&&json_get_int(payload,"endY",&ey)&&
+            json_get_int(payload,"durationMs",&duration)&&json_get_int(payload,"steps",&steps)&&
+            zxtouch_swipe_points((int)sx,(int)sy,(int)ex,(int)ey,(int)duration,(int)steps);
+        task_update(task_id,ok?"completed":"failed",ok?"swipe sequence delivered and UI adapter re-observed":NULL,
+            ok?NULL:"swipe effect is indeterminate; task was not retried",1);
+        return;
+    }
+    task_update(task_id,"failed",NULL,"unsupported task kind",1);
 }
 
 static pid_t self_update_child=0;
@@ -2468,6 +2766,9 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"task.submit-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,context.caller,trusted_confirmation_source,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"task.cancel")) execute_automation_cancel(body,context.caller,trusted_confirmation_source,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"ui.tap")) execute_ui_tap_submit(body,context.request_id,context.caller,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"ui.type")) execute_ui_type_submit(body,context.request_id,context.caller,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"ui.swipe")) execute_ui_swipe_submit(body,context.request_id,context.caller,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.stage.begin")) execute_package_stage_begin(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.stage.chunk")) execute_package_stage_chunk(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.stage.commit")) execute_package_stage_commit(body,&execution);
@@ -2565,6 +2866,7 @@ static void handle(int fd) {
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/queue")) { if(authorize_read_capability(fd,"device.automation.queue.read",caller)) send_automation_queue(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/tasks/catalog")) { if(authorize_read_capability(fd,"device.task.list",caller)) send_task_catalog(fd,caller,auth_role==RT_AUTH_ADMIN); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/ui/screen-info")) { if(authorize_read_capability(fd,"device.ui.screen-info",caller)) send_ui_screen_info(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/ui/observe")) { if(authorize_read_capability(fd,"device.ui.observe",caller)) send_ui_observe(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/apps")) { if(authorize_read_capability(fd,"device.app.list",caller)) send_text_payload(fd, apps_text()); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/apps/catalog")) { if(authorize_read_capability(fd,"device.app.list",caller)) send_app_catalog(fd); }
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/inspect/app")) { if(authorize_read_capability(fd,"device.app.inspect",caller)) send_app_inspect(fd,body); }
