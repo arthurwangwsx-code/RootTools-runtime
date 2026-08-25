@@ -2,7 +2,7 @@
 
 > Living handoff document. Every Agent working on RootTools should read this file before changing code and update it when a stable milestone, device deployment boundary, or active workstream changes.
 
-Last refreshed: **2026-08-25 23:19 +08:00**
+Last refreshed: **2026-08-26 00:47 +08:00**
 
 ## 1. Product position
 
@@ -28,7 +28,7 @@ The current priority is **RootTools itself**. AiBox integration is intentionally
 
 Latest stable code checkpoint:
 
-`d5b1231 feat: add v0.17 device inventory and process metrics`
+`ad66662 feat: add v0.18 installed package inventory`
 
 Recent milestone chain:
 
@@ -42,8 +42,9 @@ Recent milestone chain:
 | v0.15 | `d6bf5e8` | Permission profiles + Developer Mode |
 | v0.16 | `59f2b5c` | Structured device performance/resource observation |
 | v0.17 | `d5b1231` | Product App inventory/detail + process resource metrics |
+| v0.18 | `ad66662` | Read-only installed Procursus/dpkg package inventory |
 
-Source/package default at the stable checkpoint is **v0.17.0 / 0.17.0-1**.
+Source/package default at the stable checkpoint is **v0.18.0 / 0.18.0-1**.
 
 ## 3. Reference physical-device state
 
@@ -59,7 +60,7 @@ Reference device facts currently verified from Device Service:
 - headless execution: ready
 - UI execution: ready when unlocked
 
-**Important deployment boundary:** the physical device still runs **RootTools daemon v0.9.0**. Do not claim v0.10-v0.17 physical validation until `/v1/status` reports the new version after a trusted deployment.
+**Important deployment boundary:** the physical device still runs **RootTools daemon v0.9.0**. Do not claim v0.10-v0.18 physical validation until `/v1/status` reports the new version after a trusted deployment.
 
 Do not hard-code the device identifier in docs or code. Discover the connected device through `Scripts/device_service.py` / pymobiledevice3 tooling.
 
@@ -140,7 +141,7 @@ Semantic capability IDs bind to daemon-owned providers such as:
 
 Provider internals must remain invisible to Agent callers.
 
-## 5. Stable capability surfaces through v0.17
+## 5. Stable capability surfaces through v0.18
 
 ### Device and runtime
 
@@ -188,7 +189,10 @@ Stable Package Controller already supports:
 - managed uninstall;
 - retained-artifact rollback;
 - lifecycle history;
+- read-only installed Procursus/dpkg inventory via `GET /v1/packages/installed`, including package ID, version, architecture, section, priority, first-line description, installed size and Essential metadata;
 - separate RootTools Self-Updater path.
+
+The installed-device inventory is observation only. Seeing a package in the dpkg inventory does not create a RootTools lifecycle record and does not authorize device-wide uninstall or rollback. Mutation remains limited to RootTools-managed package records.
 
 ### UI automation
 
@@ -203,7 +207,7 @@ Current implementation uses fixed ZXTouch semantics internally. Accessibility/se
 
 ## 6. Current uncommitted working tree
 
-**Do not reset or clean the checkout.** There are two active uncommitted workstreams mixed in shared files.
+**Do not reset or clean the checkout.** The Installed Package Inventory workstream is now stable in `ad66662`; the checkout still contains the separate Remote Worker WIP in shared files.
 
 At the time of this handoff, modified/untracked paths include:
 
@@ -211,15 +215,12 @@ At the time of this handoff, modified/untracked paths include:
 - `App/DashboardView.swift`
 - `App/Models.swift`
 - `Daemon/control_plane.c`
-- `Daemon/package_controller.c`
-- `Daemon/package_controller.h`
 - `Daemon/provider_registry.c`
 - `Daemon/roottools_execd.c`
 - `Scripts/build.sh`
 - `Scripts/device_service.py`
 - `Scripts/test.sh`
 - `Tests/http_contract_test.py`
-- `Tests/package_controller_test.c`
 - `Tests/provider_registry_test.c`
 - `App/RemoteWorkerView.swift` (new)
 - `Daemon/remote_worker_controller.c/.h` (new)
@@ -227,32 +228,27 @@ At the time of this handoff, modified/untracked paths include:
 
 ### 6.1 Workstream A — Installed Package Inventory
 
-Partially implemented, **not yet a stable commit**.
+Completed and independently committed as **v0.18** in `ad66662`.
 
-Implemented so far:
+The stable implementation includes:
 
 - `rt_installed_packages_json()` in Package Controller;
-- read-only parsing of Procursus dpkg status;
-- default source: `/var/jb/Library/dpkg/status`;
-- test override: `ROOTTOOLS_DPKG_STATUS`;
-- only `Status: install ok installed` packages are projected;
-- endpoint: `GET /v1/packages/installed`;
-- unit fixture work in `Tests/package_controller_test.c`;
-- HTTP fixture setup in `Tests/http_contract_test.py`.
+- read-only parsing of `/var/jb/Library/dpkg/status` with test-only `ROOTTOOLS_DPKG_STATUS` override;
+- exact filtering to `Status: install ok installed`;
+- `GET /v1/packages/installed` protected by the existing R0 `device.package.list` read capability;
+- explicit `source=procursus-dpkg` and `status=installed` projection;
+- HTTP and unit fixtures;
+- Swift models and `DaemonClient` integration;
+- searchable/filterable Installed-on-device section in the Packages product page;
+- Mac Device Service command `package-installed`;
+- validation record `docs/validation/v0.18-installed-package-inventory.md`;
+- version/package bump to `0.18.0 / 0.18.0-1`.
 
-Still required before calling this milestone complete:
-
-1. finish HTTP acceptance assertion for `/v1/packages/installed`;
-2. add Swift models/client integration;
-3. integrate Installed Packages into `PackagesView` with search/filter/source/status presentation;
-4. add Mac CLI command;
-5. document validation and bump version only when complete;
-6. run full contract + iOS 16 Release on an isolated commit snapshot;
-7. commit separately from Remote Worker.
+Security boundary remains unchanged: global dpkg visibility does **not** expose global package mutation. Generic uninstall/rollback still operates only on RootTools-managed lifecycle records.
 
 ### 6.2 Workstream B — Remote Worker
 
-Concurrent uncommitted WIP, **not part of v0.17**.
+Concurrent uncommitted WIP, **not part of v0.18**.
 
 Current implementation includes:
 
@@ -307,11 +303,13 @@ See `docs/architecture/self-updater.md`.
 
 ## 8. Validation truth
 
-Latest stable v0.17 was validated independently from the concurrent Remote Worker WIP:
+Latest stable v0.18 was validated independently from the concurrent Remote Worker WIP:
 
 - full C/unit/HTTP contract suite: PASS;
 - iOS 16 Release: `BUILD SUCCEEDED`;
-- validation was performed from a Git index snapshot containing only v0.17 staged changes.
+- rootless DEB packaging: PASS (`roottools_0.18.0-1_iphoneos-arm64.deb`);
+- validation was performed from exact Git index tree `185fe1263c3da1b5d89abb88abfbf0e5710f431a` in an isolated managed worktree containing only the v0.18 staged changes;
+- the generated validation DEB SHA-256 was `9176ec312b3245377719c3020c25a5dd2a9e8f15a242363785bcbeec3ccea93b`.
 
 The **current mixed working tree** was also re-tested at handoff time and passes:
 
@@ -326,7 +324,7 @@ The **current mixed working tree** was also re-tested at handoff time and passes
 - `http_contract_test`
 - `RootTools contract tests`
 
-No post-v0.17 mixed-tree iOS Release should be assumed until explicitly run.
+The mixed tree was contract-tested before the v0.18 extraction, but the **stable v0.18 claim comes only from the isolated index snapshot**. Remote Worker still requires its own isolated validation before it becomes stable.
 
 Canonical checks:
 
@@ -342,7 +340,7 @@ Never print or commit token contents.
 ## 9. Build/development notes
 
 - project target remains iOS 16+;
-- `xcodegen` is not installed on the current build host, so `Scripts/build.sh` uses the existing local `RootTools.xcodeproj` fallback;
+- `xcodegen` is currently available at `/opt/homebrew/bin/xcodegen`; the v0.18 isolated Release validation regenerated the project from `project.yml` rather than relying on the ignored local project;
 - Release builds use Swift whole-module optimization and can be slow as product UI grows;
 - do not interpret a long-running high-CPU `swift-frontend` as a hang without checking the process first;
 - the ignored/local Xcode project may be changed by concurrent work; for clean validation, use an isolated worktree/index snapshot or regenerate the project when xcodegen is available.
@@ -351,14 +349,13 @@ Never print or commit token contents.
 
 Order of work after this handoff:
 
-1. finish and independently commit Installed Package Inventory;
-2. finish and independently commit Remote Worker without mixing Package Inventory;
-3. implement product-level scoped Files Manager;
-4. solve v0.9 -> current Self-Updater bootstrap migration;
-5. deploy one consolidated stable build to the reference iPhone and run physical qualification;
-6. deepen UI automation to Accessibility/selector/vision semantics;
-7. deepen Task Runtime into multi-step Workflow/Trigger/Retry/Result semantics;
-8. continue device-management completeness: package/app recovery, diagnostics, crash/reboot/bootstrap recovery and production 1.0 hardening.
+1. finish and independently commit Remote Worker from the remaining dirty WIP;
+2. implement product-level scoped Files Manager;
+3. solve the production-blocking v0.9 -> current Self-Updater bootstrap migration without exposing raw privileged execution;
+4. deploy one consolidated stable build to the reference iPhone and run physical qualification;
+5. deepen UI automation to Accessibility/selector/vision semantics;
+6. deepen Task Runtime into multi-step Workflow/Trigger/Retry/Result semantics;
+7. continue device-management completeness: package/app recovery, diagnostics, crash/reboot/bootstrap recovery and production 1.0 hardening.
 
 AiBox and Network Skill integration remain deferred until the RootTools runtime itself reaches this maturity.
 
@@ -372,4 +369,4 @@ AiBox and Network Skill integration remain deferred until the RootTools runtime 
 - prefer managed worktrees for truly parallel development;
 - keep each milestone versioned, documented and independently revertible.
 
-The v0.17 extraction is the reference example: shared-file WIP was excluded, then the staged index snapshot independently passed both contracts and iOS Release before commit.
+The v0.18 extraction is the current reference example: Package Inventory hunks were selectively staged out of files concurrently modified by Remote Worker, the staged diff was checked for Remote Worker contamination, then the exact index snapshot independently passed contracts, iOS 16 Release, and rootless DEB packaging before commit.
