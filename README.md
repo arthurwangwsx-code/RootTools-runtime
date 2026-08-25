@@ -7,6 +7,8 @@ Independent iOS 16+ jailbreak device control plane for personal devices.
 RootTools is evolving from a privileged toolbox into a policy-controlled iOS Device Control Plane. The daemon owns capability metadata, risk policy, semantic action routing, audit receipts, and post-condition verification. UI, future automation, and future Agent adapters call typed capabilities rather than receiving a raw privileged shell.
 
 - Product definition: `docs/product/product-definition.md`
+- Current project/handoff state: `docs/handoff/CURRENT_STATE.md`
+- Agent handoff snapshot: `docs/handoff/AGENT_HANDOFF_2026-08-25.md`
 - Long-term roadmap: `docs/roadmap/long-term-roadmap.md`
 - Control Plane architecture: `docs/architecture/control-plane.md`
 - Command Gateway: `docs/architecture/command-gateway.md`

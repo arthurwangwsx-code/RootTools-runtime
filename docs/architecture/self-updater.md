@@ -57,3 +57,18 @@ If the new daemon does not become healthy, the updater stops it, restores the re
 ## Recovery boundary
 
 The updater has a non-KeepAlive launchd job with `RunAtLoad`. A queued request that survived a jailbreak/bootstrap restart can be claimed by the helper. Full recovery from power loss in the middle of the multi-file switch remains a P7 production-hardening item; v0.8 records `launching/running` state so that recovery can be made deterministic without guessing.
+
+## Reference-device bootstrap migration status
+
+The reference iOS 16 device currently runs the older v0.9.0 daemon/updater. A physical self-update attempt established the following boundary:
+
+1. a newer RootTools DEB can be staged and SHA-256 verified;
+2. owner-confirmed `device.self-update.schedule` is accepted and persisted;
+3. the independent updater reaches preflight without replacing the serving runtime;
+4. the old launchd environment does not include the Procursus bootstrap tool paths;
+5. `dpkg-deb` therefore cannot resolve its `tar` dependency and metadata validation fails;
+6. the update fails before switch and the healthy v0.9.0 daemon remains running.
+
+Newer source initializes the correct rootless bootstrap `PATH`, but that fix is inside the newer updater itself. This is therefore an updater-bootstrap migration problem, not a reason to expose a generic privileged command channel.
+
+The remaining goal is one trusted migration from the physical v0.9 updater to the current updater while preserving R2 owner authorization, fixed payload validation, health verification and rollback. After that migration, normal RootTools upgrades should use the typed Self-Updater rather than repeated manual Sileo/Filza installation.
