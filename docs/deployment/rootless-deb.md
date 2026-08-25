@@ -11,7 +11,7 @@ python3 Scripts/package-rootless-deb.py
 
 Default output:
 
-`build/packages/roottools_0.9.0-2_iphoneos-arm64.deb`
+`build/packages/roottools_0.9.0-3_iphoneos-arm64.deb`
 
 ## Package allowlist
 
@@ -26,6 +26,11 @@ The package data archive contains only:
 The build pre-signs the App executable, daemon, and independent updater on the
 Mac using host `ldid` when available, otherwise macOS `codesign -s -`. This
 avoids bootstrap failure when the target jailbreak does not yet have `ldid`.
+
+The data archive also emits explicit parent-directory entries for nested App
+content such as `_CodeSignature/CodeResources`. This is required for reliable
+dpkg upgrades over an older RootTools.app whose directory tree may not already
+contain those signing directories.
 
 The post-install script:
 

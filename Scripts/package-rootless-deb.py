@@ -4,7 +4,7 @@ from __future__ import annotations
 import argparse
 import io
 import os
-from pathlib import Path
+from pathlib import Path, PurePosixPath
 import stat
 import tarfile
 import time
@@ -21,7 +21,28 @@ DEFAULT_UPDATER_PLIST = ROOT / "Daemon/com.arthur.roottools.updater.plist"
 def tar_bytes(files: list[tuple[Path, str, int]], extra_text: dict[str, tuple[str, int]] | None = None) -> bytes:
     buffer = io.BytesIO()
     with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.GNU_FORMAT) as archive:
+        added_directories: set[str] = set()
+
+        def add_parent_directories(destination: str) -> None:
+            normalized = destination.removeprefix("./")
+            parent_chain = list(PurePosixPath(normalized).parents)
+            for parent in reversed(parent_chain):
+                name = parent.as_posix()
+                if name in {".", "/"} or name in added_directories:
+                    continue
+                info = tarfile.TarInfo(f"./{name}")
+                info.type = tarfile.DIRTYPE
+                info.mode = 0o755
+                info.uid = 0
+                info.gid = 0
+                info.uname = "root"
+                info.gname = "wheel"
+                info.mtime = int(time.time())
+                archive.addfile(info)
+                added_directories.add(name)
+
         for source, destination, mode in files:
+            add_parent_directories(destination)
             info = archive.gettarinfo(str(source), arcname=destination)
             info.uid = 0
             info.gid = 0
@@ -32,6 +53,7 @@ def tar_bytes(files: list[tuple[Path, str, int]], extra_text: dict[str, tuple[st
                 archive.addfile(info, handle)
         if extra_text:
             for destination, (text, mode) in extra_text.items():
+                add_parent_directories(destination)
                 payload = text.encode()
                 info = tarfile.TarInfo(destination)
                 info.size = len(payload)
@@ -87,7 +109,6 @@ Section: Utilities
 Priority: optional
 Maintainer: RootTools
 Depends: firmware (>= 16.0)
-Recommends: ldid
 Description: Policy-controlled privileged iOS device control plane
 """
 
@@ -161,8 +182,8 @@ def main() -> int:
     parser.add_argument("--updater", type=Path, default=DEFAULT_UPDATER)
     parser.add_argument("--plist", type=Path, default=DEFAULT_PLIST)
     parser.add_argument("--updater-plist", type=Path, default=DEFAULT_UPDATER_PLIST)
-    parser.add_argument("--version", default="0.9.0-2")
-    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.9.0-2_iphoneos-arm64.deb")
+    parser.add_argument("--version", default="0.9.0-3")
+    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.9.0-3_iphoneos-arm64.deb")
     args = parser.parse_args()
     build_package(args.app, args.daemon, args.updater, args.plist, args.updater_plist, args.output, args.version)
     print(args.output)

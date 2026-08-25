@@ -32,6 +32,7 @@ clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   Tests/runtime_observer_test.c Daemon/provider_registry.c Daemon/runtime_observer.c \
   -o build/tests/runtime_observer_test
 build/tests/runtime_observer_test
+python3 Tests/package_builder_test.py
 build/tests/control_plane_test --catalog | python3 -c '
 import json, sys
 catalog=json.load(sys.stdin)
