@@ -124,6 +124,9 @@ class DeviceServiceClient:
     def packages(self) -> dict:
         return self.request("GET", "/v1/packages/catalog")
 
+    def package_history(self) -> dict:
+        return self.request("GET", "/v1/packages/history")
+
     def runtime_catalog(self) -> dict:
         return self.request("GET", "/v1/runtime/catalog")
 
@@ -266,6 +269,22 @@ class DeviceServiceClient:
             timeout=180,
         )
 
+    def uninstall_package(self, package_id: str, confirmed: bool) -> dict:
+        rows = self.packages().get("packages", [])
+        package = next((item for item in rows if item.get("packageId") == package_id), None)
+        if not package:
+            raise DeviceServiceError(f"Managed package not found: {package_id}")
+        capability = "device.package.uninstall-deb" if package.get("format") == "deb" else "device.package.uninstall-ipa"
+        return self.action(capability, {"packageId": package_id}, confirmed=confirmed, timeout=180)
+
+    def rollback_package(self, package_id: str, confirmed: bool) -> dict:
+        rows = self.packages().get("packages", [])
+        package = next((item for item in rows if item.get("packageId") == package_id), None)
+        if not package:
+            raise DeviceServiceError(f"Retained package not found: {package_id}")
+        capability = "device.package.rollback-deb" if package.get("format") == "deb" else "device.package.rollback-ipa"
+        return self.action(capability, {"packageId": package_id}, confirmed=confirmed, timeout=180)
+
     def discard_package(self, package_id: str) -> dict:
         return self.action("device.package.discard", {"packageId": package_id})
 
@@ -307,6 +326,7 @@ def build_parser() -> argparse.ArgumentParser:
     package_plan = sub.add_parser("package-plan")
     package_plan.add_argument("format", choices=("deb", "ipa", "tipa"))
     sub.add_parser("package-list")
+    sub.add_parser("package-history")
     package_stage = sub.add_parser("package-stage")
     package_stage.add_argument("file", type=Path)
     package_stage.add_argument("--identifier", default="", help="Optional expected DEB Package ID or iOS bundle ID")
@@ -315,6 +335,12 @@ def build_parser() -> argparse.ArgumentParser:
     package_install.add_argument("--confirm", action="store_true", required=True)
     package_discard = sub.add_parser("package-discard")
     package_discard.add_argument("package_id")
+    package_uninstall = sub.add_parser("package-uninstall", help="R2 owner action; uninstall one RootTools-managed package")
+    package_uninstall.add_argument("package_id")
+    package_uninstall.add_argument("--confirm", action="store_true", required=True)
+    package_rollback = sub.add_parser("package-rollback", help="R2 owner action; restore a retained verified package")
+    package_rollback.add_argument("package_id")
+    package_rollback.add_argument("--confirm", action="store_true", required=True)
     sub.add_parser("audit")
     sub.add_parser("runtime")
     sub.add_parser("apps")
@@ -392,12 +418,18 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.package_plan(args.format)
     if args.command == "package-list":
         return client.packages()
+    if args.command == "package-history":
+        return client.package_history()
     if args.command == "package-stage":
         return client.stage_package(args.file, args.identifier)
     if args.command == "package-install":
         return client.install_package(args.package_id, args.confirm)
     if args.command == "package-discard":
         return client.discard_package(args.package_id)
+    if args.command == "package-uninstall":
+        return client.uninstall_package(args.package_id, args.confirm)
+    if args.command == "package-rollback":
+        return client.rollback_package(args.package_id, args.confirm)
     if args.command == "runtime-catalog":
         return client.runtime_catalog()
     if args.command == "lock-state":

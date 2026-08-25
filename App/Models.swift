@@ -189,6 +189,25 @@ struct StagedPackageCatalog: Codable, Equatable {
     var count: Int
 }
 
+struct PackageHistoryEvent: Codable, Identifiable, Equatable {
+    var sequence: Int64
+    var packageId: String
+    var identifier: String
+    var format: String
+    var action: String
+    var providerId: String
+    var result: String
+    var occurredAt: Int64
+
+    var id: Int64 { sequence }
+}
+
+struct PackageHistoryPayload: Codable, Equatable {
+    var schemaVersion: Int
+    var events: [PackageHistoryEvent]
+    var count: Int
+}
+
 struct ApplicationInspection: Codable, Equatable {
     var bundleID: String
     var executable: String

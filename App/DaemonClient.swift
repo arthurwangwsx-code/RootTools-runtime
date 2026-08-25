@@ -177,6 +177,11 @@ final class DaemonClient {
         return try decoder.decode(StagedPackageCatalog.self, from: data)
     }
 
+    func packageHistory() async throws -> PackageHistoryPayload {
+        let data = try await request(path: "/v1/packages/history")
+        return try decoder.decode(PackageHistoryPayload.self, from: data)
+    }
+
     func stagePackage(url: URL, expectedIdentifier: String = "") async throws -> ActionReceipt {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
@@ -261,6 +266,38 @@ final class DaemonClient {
 
     func installPackage(_ package: StagedPackageDescriptor, confirmed: Bool) async throws -> ActionReceipt {
         let capability = package.format == "deb" ? "device.package.install-deb" : "device.package.install-ipa"
+        return try await post(
+            path: "/v1/action",
+            body: PackageIDActionBody(
+                capabilityId: capability,
+                packageId: package.packageId,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: confirmed
+            ),
+            response: ActionReceipt.self,
+            timeout: 180
+        )
+    }
+
+    func rollbackPackage(_ package: StagedPackageDescriptor, confirmed: Bool) async throws -> ActionReceipt {
+        let capability = package.format == "deb" ? "device.package.rollback-deb" : "device.package.rollback-ipa"
+        return try await post(
+            path: "/v1/action",
+            body: PackageIDActionBody(
+                capabilityId: capability,
+                packageId: package.packageId,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: confirmed
+            ),
+            response: ActionReceipt.self,
+            timeout: 180
+        )
+    }
+
+    func uninstallPackage(_ package: StagedPackageDescriptor, confirmed: Bool) async throws -> ActionReceipt {
+        let capability = package.format == "deb" ? "device.package.uninstall-deb" : "device.package.uninstall-ipa"
         return try await post(
             path: "/v1/action",
             body: PackageIDActionBody(

@@ -38,6 +38,7 @@ static const RTProviderBinding kBindings[] = {
     {"device.providers.read", "roottools.execd"},
     {"device.package.plan", "roottools.execd"},
     {"device.package.list", "roottools.execd"},
+    {"device.package.history", "roottools.execd"},
     {"device.lock.observe", "ios.darwin"},
     {"device.automation.observe", "roottools.execd"},
     {"device.automation.queue.read", "roottools.execd"},
@@ -68,6 +69,10 @@ static const RTProviderBinding kBindings[] = {
     {"device.agent.rotate", "roottools.execd"},
     {"device.package.install-deb", "bootstrap.procursus"},
     {"device.package.install-ipa", "package.trollstore"},
+    {"device.package.rollback-deb", "bootstrap.procursus"},
+    {"device.package.rollback-ipa", "package.trollstore"},
+    {"device.package.uninstall-deb", "bootstrap.procursus"},
+    {"device.package.uninstall-ipa", "package.trollstore"},
 };
 
 static int port_open(int port) {

@@ -12,6 +12,8 @@ int main(void) {
     assert(rt_provider_available(daemon) == 1);
     assert(!strcmp(rt_provider_for_capability("device.app.launch"), "ui.springboard"));
     assert(!strcmp(rt_provider_for_capability("device.permission.tcc"), "permission.tcc"));
+    assert(!strcmp(rt_provider_for_capability("device.package.uninstall-deb"), "bootstrap.procursus"));
+    assert(!strcmp(rt_provider_for_capability("device.package.rollback-ipa"), "package.trollstore"));
 
     char *catalog = rt_providers_json();
     assert(catalog != NULL);

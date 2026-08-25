@@ -42,7 +42,12 @@ int rt_package_commit(const char *package_id, RTPackageOperation *operation);
 int rt_package_discard(const char *package_id, RTPackageOperation *operation);
 int rt_package_install_deb(const char *package_id, RTPackageOperation *operation);
 int rt_package_install_ipa(const char *package_id, RTPackageOperation *operation);
+int rt_package_rollback_deb(const char *package_id, RTPackageOperation *operation);
+int rt_package_rollback_ipa(const char *package_id, RTPackageOperation *operation);
+int rt_package_uninstall_deb(const char *package_id, RTPackageOperation *operation);
+int rt_package_uninstall_ipa(const char *package_id, RTPackageOperation *operation);
 int rt_package_get(const char *package_id, RTPackageInfo *info);
 char *rt_packages_json(void);
+char *rt_package_history_json(void);
 
 #endif

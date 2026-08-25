@@ -212,10 +212,13 @@ struct ProvidersView: View {
 
 struct PackagesView: View {
     @State private var packages: [StagedPackageDescriptor] = []
+    @State private var history: [PackageHistoryEvent] = []
     @State private var importing = false
     @State private var running = false
     @State private var message = "Stage a DEB, IPA, or TIPA into the RootTools-owned package store."
     @State private var pendingInstall: StagedPackageDescriptor?
+    @State private var pendingUninstall: StagedPackageDescriptor?
+    @State private var pendingRollback: StagedPackageDescriptor?
 
     var body: some View {
         List {
@@ -245,6 +248,23 @@ struct PackagesView: View {
                 }
                 ForEach(packages) { package in
                     packageRow(package)
+                }
+            }
+
+            if !history.isEmpty {
+                Section("Recent lifecycle") {
+                    ForEach(history.prefix(12)) { event in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text(event.action.uppercased()).font(.caption2.weight(.bold))
+                                Spacer()
+                                Text(event.result).font(.caption2).foregroundStyle(.secondary)
+                            }
+                            Text(event.identifier).font(.caption.monospaced()).textSelection(.enabled)
+                            Text("\(event.providerId) · #\(event.sequence)")
+                                .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
                 }
             }
         }
@@ -284,6 +304,44 @@ struct PackagesView: View {
                 Text("R2 owner confirmation. \(package.name) will be installed through \(package.format == "deb" ? "Procursus/dpkg" : "TrollStore") and verified after installation.")
             }
         }
+        .confirmationDialog(
+            "Uninstall managed package?",
+            isPresented: Binding(
+                get: { pendingUninstall != nil },
+                set: { if !$0 { pendingUninstall = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Uninstall", role: .destructive) {
+                guard let package = pendingUninstall else { return }
+                pendingUninstall = nil
+                Task { await uninstall(package) }
+            }
+            Button("Cancel", role: .cancel) { pendingUninstall = nil }
+        } message: {
+            if let package = pendingUninstall {
+                Text("R2 owner confirmation. Only the RootTools-managed install for \(package.expectedIdentifier) will be removed. The verified artifact is retained for reinstall.")
+            }
+        }
+        .confirmationDialog(
+            "Rollback to retained package?",
+            isPresented: Binding(
+                get: { pendingRollback != nil },
+                set: { if !$0 { pendingRollback = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Rollback", role: .destructive) {
+                guard let package = pendingRollback else { return }
+                pendingRollback = nil
+                Task { await rollback(package) }
+            }
+            Button("Cancel", role: .cancel) { pendingRollback = nil }
+        } message: {
+            if let package = pendingRollback {
+                Text("R2 owner confirmation. The retained, SHA-256-verified artifact \(package.name) will become active again through its fixed provider.")
+            }
+        }
     }
 
     @ViewBuilder
@@ -312,8 +370,14 @@ struct PackagesView: View {
                 .textSelection(.enabled)
 
             HStack {
-                if package.state == "ready" {
+                if package.state == "ready" || package.state == "uninstalled" {
                     Button("Install", role: .destructive) { pendingInstall = package }
+                }
+                if package.state == "installed" {
+                    Button("Uninstall", role: .destructive) { pendingUninstall = package }
+                }
+                if package.state == "retained" {
+                    Button("Rollback", role: .destructive) { pendingRollback = package }
                 }
                 if package.state != "installed" && package.state != "discarded" {
                     Spacer()
@@ -328,7 +392,10 @@ struct PackagesView: View {
     @MainActor
     private func refresh() async {
         do {
-            packages = try await DaemonClient.shared.packageCatalog().packages
+            async let catalog = DaemonClient.shared.packageCatalog()
+            async let historyPayload = DaemonClient.shared.packageHistory()
+            packages = try await catalog.packages
+            history = (try? await historyPayload.events) ?? []
         } catch {
             message = error.localizedDescription
         }
@@ -357,6 +424,36 @@ struct PackagesView: View {
         do {
             let receipt = try await DaemonClient.shared.installPackage(package, confirmed: true)
             message = "\(receipt.ok ? "INSTALLED" : "FAILED") · \(receipt.providerId ?? "—") · \(receipt.message)"
+            await refresh()
+        } catch {
+            message = error.localizedDescription
+            await refresh()
+        }
+    }
+
+    @MainActor
+    private func rollback(_ package: StagedPackageDescriptor) async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            let receipt = try await DaemonClient.shared.rollbackPackage(package, confirmed: true)
+            message = "\(receipt.ok ? "ROLLED BACK" : "FAILED") · \(receipt.providerId ?? "—") · \(receipt.message)"
+            await refresh()
+        } catch {
+            message = error.localizedDescription
+            await refresh()
+        }
+    }
+
+    @MainActor
+    private func uninstall(_ package: StagedPackageDescriptor) async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            let receipt = try await DaemonClient.shared.uninstallPackage(package, confirmed: true)
+            message = "\(receipt.ok ? "UNINSTALLED" : "FAILED") · \(receipt.providerId ?? "—") · \(receipt.message)"
             await refresh()
         } catch {
             message = error.localizedDescription

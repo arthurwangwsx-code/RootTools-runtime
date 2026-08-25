@@ -33,7 +33,7 @@
 #include "provider_registry.h"
 
 #define PORT 45821
-#define VERSION "0.6.0"
+#define VERSION "0.7.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1433,6 +1433,13 @@ static void send_package_catalog(int fd) {
     free(response);
 }
 
+static void send_package_history(int fd) {
+    char *response=rt_package_history_json();
+    if(!response){send_error(fd,503,"package history unavailable");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
+}
+
 static void send_lock_state(int fd) {
     RTLockSnapshot snapshot=device_lock_snapshot();
     char lock_source[256]={0},screen_source[256]={0};
@@ -1513,7 +1520,7 @@ static void send_hello(int fd, RTAuthRole role) {
         "\"authenticatedRole\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
         "\"features\":{\"typedActions\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
-        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
+        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
@@ -1792,6 +1799,30 @@ static void execute_package_install_ipa(const char *body, RTActionExecution *exe
     RTPackageOperation op;rt_package_install_ipa(package_id,&op);copy_package_operation(package_id,&op,execution);
 }
 
+static void execute_package_rollback_deb(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTPackageOperation op;rt_package_rollback_deb(package_id,&op);copy_package_operation(package_id,&op,execution);
+}
+
+static void execute_package_rollback_ipa(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTPackageOperation op;rt_package_rollback_ipa(package_id,&op);copy_package_operation(package_id,&op,execution);
+}
+
+static void execute_package_uninstall_deb(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTPackageOperation op;rt_package_uninstall_deb(package_id,&op);copy_package_operation(package_id,&op,execution);
+}
+
+static void execute_package_uninstall_ipa(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTPackageOperation op;rt_package_uninstall_ipa(package_id,&op);copy_package_operation(package_id,&op,execution);
+}
+
 static void execute_agent_rotate(RTActionExecution *execution) {
     unsigned char random_bytes[24]; arc4random_buf(random_bytes,sizeof(random_bytes));
     char token[sizeof(random_bytes)*2+1]={0};
@@ -1991,6 +2022,10 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"package.discard")) execute_package_discard(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.install-deb")) execute_package_install_deb(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.install-ipa")) execute_package_install_ipa(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.rollback-deb")) execute_package_rollback_deb(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.rollback-ipa")) execute_package_rollback_ipa(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.uninstall-deb")) execute_package_uninstall_deb(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.uninstall-ipa")) execute_package_uninstall_ipa(body,&execution);
     else {snprintf(execution.result,sizeof(execution.result),"denied");snprintf(execution.message,sizeof(execution.message),"No executor registered");}
 
     send_action_receipt(fd,capability,&context,decision,&execution); execution_free(&execution);
@@ -2059,6 +2094,7 @@ static void handle(int fd) {
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/providers/catalog")) { if(authorize_read_capability(fd,"device.providers.read")) send_provider_catalog(fd); }
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan")) send_package_plan(fd,body); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/catalog")) { if(authorize_read_capability(fd,"device.package.list")) send_package_catalog(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/history")) { if(authorize_read_capability(fd,"device.package.history")) send_package_history(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe")) send_lock_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe")) send_automation_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/queue")) { if(authorize_read_capability(fd,"device.automation.queue.read")) send_automation_queue(fd); }

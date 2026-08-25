@@ -43,6 +43,15 @@ Make jailbreak/runtime mechanisms replaceable implementation providers behind st
 - Mac CLI and iOS owner UI use the same semantic package staging/install protocol;
 - staged package path and provider argv are never caller-controlled.
 
+### v0.7 Managed package lifecycle
+
+- prior verified active artifacts become `retained` rather than being deleted;
+- `device.package.rollback-deb` / `device.package.rollback-ipa` reinstall retained artifacts through fixed providers;
+- `device.package.uninstall-deb` / `device.package.uninstall-ipa` remove only RootTools-managed installed targets;
+- `/v1/packages/history` records install/rollback/uninstall provider outcomes;
+- rollback/uninstall remain R2 owner-confirmed and keep post-condition verification;
+- generic uninstall for packages not installed through RootTools remains outside the protocol.
+
 ### iOS UI
 
 - Providers screen grouped by provider domain;
@@ -63,10 +72,10 @@ Make jailbreak/runtime mechanisms replaceable implementation providers behind st
 The Provider Plane foundation is complete, but P3 as a whole remains in progress. Next increments are deliberately ordered:
 
 1. Extract the remaining monolithic app/process/filesystem executors into provider-specific implementation files without changing capability contracts.
-2. Add package rollback/uninstall semantics and a separate RootTools self-update helper that survives daemon replacement.
+2. Add a separate RootTools self-update helper that survives daemon replacement.
 3. Add Frida/ElleKit semantic runtime operations, never general scripts.
 4. Add provider compatibility/version metadata and fallback selection for alternate jailbreaks.
-5. Physical-device qualification of Provider Plane + Package Controller once v0.6 deployment is available.
+5. Physical-device qualification of Provider Plane + Package Controller once v0.7 deployment is available.
 
 ## Definition of done for full P3
 

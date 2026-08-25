@@ -93,6 +93,19 @@ Post-condition:
 
 the expected bundle ID must resolve through the installed application database (`uicache -i`).
 
+## Managed lifecycle (v0.7)
+
+RootTools keeps verified package artifacts after a successful install. When a newer managed artifact for the same identifier becomes active, the prior `installed` record becomes `retained`. This gives RootTools a bounded rollback primitive without snapshotting arbitrary system files.
+
+- `installed -> retained` happens only when a different verified artifact for the same identifier installs successfully.
+- `retained -> installed` is an R2 rollback through the same fixed provider and post-condition path.
+- `installed -> uninstalled` is an R2 managed uninstall; the verified artifact remains available for explicit reinstall.
+- DEB rollback may add `--allow-downgrades` only to the fixed apt install path. Ordinary installs do not.
+- TrollStore uninstall is pinned to `trollstorehelper uninstall <managed-bundle-id>`; callers never supply an app path.
+- `/v1/packages/history` records package install/rollback/uninstall events in addition to the global privileged Action audit.
+
+Uninstall intentionally applies only to a RootTools package record in `installed` state. RootTools does not expose a generic device-wide uninstall-by-identifier primitive.
+
 ## Host workflow
 
 `Scripts/device_service.py` provides the ADB-like typed client:
@@ -100,7 +113,10 @@ the expected bundle ID must resolve through the installed application database (
 ```text
 package-stage <file> [--identifier ...]
 package-list
+package-history
 package-install <packageId> --confirm
+package-uninstall <packageId> --confirm
+package-rollback <packageId> --confirm
 package-discard <packageId>
 ```
 
@@ -126,6 +142,9 @@ The Packages screen uses the system file importer. It:
 - lists package state and detected identity;
 - shows provider-aware install confirmation;
 - invokes the same R2 install capability as the host;
+- allows R2 uninstall for the active managed artifact;
+- allows R2 rollback for a retained verified artifact;
+- shows recent package lifecycle history;
 - supports discard for non-installed staged records.
 
 `RootTools.app` remains UID 501. Package installation remains in the UID 0 daemon.

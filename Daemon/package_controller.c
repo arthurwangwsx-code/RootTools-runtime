@@ -108,9 +108,19 @@ static int db_open(sqlite3 **out) {
         "package_id TEXT PRIMARY KEY,name TEXT NOT NULL,format TEXT NOT NULL,expected_identifier TEXT NOT NULL,"
         "total_size INTEGER NOT NULL,received_size INTEGER NOT NULL,sha256 TEXT NOT NULL,state TEXT NOT NULL,"
         "created_at INTEGER NOT NULL,updated_at INTEGER NOT NULL,result TEXT,error TEXT);";
+    const char *history_schema=
+        "CREATE TABLE IF NOT EXISTS package_events("
+        "sequence INTEGER PRIMARY KEY AUTOINCREMENT,package_id TEXT NOT NULL,identifier TEXT NOT NULL,"
+        "format TEXT NOT NULL,action TEXT NOT NULL,provider_id TEXT NOT NULL,result TEXT NOT NULL,"
+        "occurred_at INTEGER NOT NULL);";
     char *error=NULL;
     rc=sqlite3_exec(db,schema,NULL,NULL,&error);
     sqlite3_free(error);
+    if(rc==SQLITE_OK){
+        error=NULL;
+        rc=sqlite3_exec(db,history_schema,NULL,NULL,&error);
+        sqlite3_free(error);
+    }
     if(rc!=SQLITE_OK){sqlite3_close(db);return 0;}
     *out=db;
     return 1;
@@ -182,6 +192,59 @@ static int update_identifier(const char *id, const char *identifier) {
     sqlite3_finalize(st);
     sqlite3_close(db);
     return rc==SQLITE_DONE&&changed==1;
+}
+
+static int record_event(const RTPackageInfo *info, const char *action, const char *provider_id, const char *result) {
+    sqlite3 *db=NULL;
+    if(!info||!db_open(&db))return 0;
+    sqlite3_stmt *st=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "INSERT INTO package_events(package_id,identifier,format,action,provider_id,result,occurred_at) VALUES(?1,?2,?3,?4,?5,?6,?7)",
+        -1,&st,NULL);
+    if(rc==SQLITE_OK){
+        sqlite3_bind_text(st,1,info->package_id,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(st,2,info->expected_identifier,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(st,3,info->format,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(st,4,action,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(st,5,provider_id,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(st,6,result,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_int64(st,7,time(NULL));
+        rc=sqlite3_step(st);
+    }
+    sqlite3_finalize(st);sqlite3_close(db);
+    return rc==SQLITE_DONE;
+}
+
+static int activate_package(const RTPackageInfo *info, const char *result) {
+    sqlite3 *db=NULL;
+    if(!info||!db_open(&db))return 0;
+    if(sqlite3_exec(db,"BEGIN IMMEDIATE",NULL,NULL,NULL)!=SQLITE_OK){sqlite3_close(db);return 0;}
+    sqlite3_stmt *retire=NULL,*activate=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "UPDATE staged_packages SET state='retained',updated_at=?1 WHERE expected_identifier=?2 AND state='installed' AND package_id<>?3",
+        -1,&retire,NULL);
+    if(rc==SQLITE_OK){
+        sqlite3_bind_int64(retire,1,time(NULL));
+        sqlite3_bind_text(retire,2,info->expected_identifier,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(retire,3,info->package_id,-1,SQLITE_TRANSIENT);
+        rc=sqlite3_step(retire);
+    }
+    sqlite3_finalize(retire);
+    if(rc==SQLITE_DONE)rc=sqlite3_prepare_v2(db,
+        "UPDATE staged_packages SET state='installed',updated_at=?1,result=?2,error=NULL WHERE package_id=?3",
+        -1,&activate,NULL);
+    if(rc==SQLITE_OK){
+        sqlite3_bind_int64(activate,1,time(NULL));
+        sqlite3_bind_text(activate,2,result,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(activate,3,info->package_id,-1,SQLITE_TRANSIENT);
+        rc=sqlite3_step(activate);
+    }
+    int changed=sqlite3_changes(db);
+    sqlite3_finalize(activate);
+    int ok=rc==SQLITE_DONE&&changed==1&&sqlite3_exec(db,"COMMIT",NULL,NULL,NULL)==SQLITE_OK;
+    if(!ok)sqlite3_exec(db,"ROLLBACK",NULL,NULL,NULL);
+    sqlite3_close(db);
+    return ok;
 }
 
 int rt_package_begin(const char *package_id, const char *name, const char *format,
@@ -610,11 +673,47 @@ static int verify_app_installed(const char *bundle_id) {
     return rc==0&&strstr(output,"Executable Name:")!=NULL;
 }
 
-int rt_package_install_deb(const char *package_id, RTPackageOperation *op) {
+static int verify_deb_absent(const char *identifier) {
+    return !verify_deb_installed(identifier);
+}
+
+static int verify_app_absent(const char *bundle_id) {
+    return !verify_app_installed(bundle_id);
+}
+
+static int installable_state(const char *state) {
+    return state && (!strcmp(state,"ready") || !strcmp(state,"uninstalled"));
+}
+
+static int rollbackable_state(const char *state) {
+    return state && !strcmp(state,"retained");
+}
+
+static int update_result_only(const char *package_id, const char *result, const char *error) {
+    sqlite3 *db=NULL;
+    if(!db_open(&db))return 0;
+    sqlite3_stmt *st=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "UPDATE staged_packages SET updated_at=?1,result=?2,error=?3 WHERE package_id=?4",
+        -1,&st,NULL);
+    if(rc==SQLITE_OK){
+        sqlite3_bind_int64(st,1,time(NULL));
+        if(result)sqlite3_bind_text(st,2,result,-1,SQLITE_TRANSIENT);else sqlite3_bind_null(st,2);
+        if(error)sqlite3_bind_text(st,3,error,-1,SQLITE_TRANSIENT);else sqlite3_bind_null(st,3);
+        sqlite3_bind_text(st,4,package_id,-1,SQLITE_TRANSIENT);
+        rc=sqlite3_step(st);
+    }
+    int changed=sqlite3_changes(db);
+    sqlite3_finalize(st);sqlite3_close(db);
+    return rc==SQLITE_DONE&&changed==1;
+}
+
+static int install_deb_internal(const char *package_id, int rollback, RTPackageOperation *op) {
     operation_init(op);
     RTPackageInfo info;
-    if(!rt_package_get(package_id,&info)||strcmp(info.state,"ready")||strcmp(info.format,"deb")){
-        snprintf(op->message,sizeof(op->message),"DEB package is not ready");
+    if(!rt_package_get(package_id,&info)||strcmp(info.format,"deb")||
+       (rollback?!rollbackable_state(info.state):!installable_state(info.state))){
+        snprintf(op->message,sizeof(op->message),rollback?"DEB rollback artifact is not retained":"DEB package is not installable");
         return 0;
     }
     char path[1024]={0};
@@ -635,8 +734,14 @@ int rt_package_install_deb(const char *package_id, RTPackageOperation *op) {
     int used_apt=access(apt_get,X_OK)==0;
     int rc=0;
     if(used_apt){
-        char *argv[]={(char*)"apt-get",(char*)"install",(char*)"-y",(char*)"--no-remove",path,NULL};
-        rc=spawn_capture_timeout(apt_get,argv,output,sizeof(output),180);
+        char *argv[]={(char*)"apt-get",(char*)"install",(char*)"-y",(char*)"--no-remove",
+            rollback?(char*)"--allow-downgrades":path,
+            rollback?path:NULL,NULL};
+        if(rollback)rc=spawn_capture_timeout(apt_get,argv,output,sizeof(output),180);
+        else {
+            char *normal_argv[]={(char*)"apt-get",(char*)"install",(char*)"-y",(char*)"--no-remove",path,NULL};
+            rc=spawn_capture_timeout(apt_get,normal_argv,output,sizeof(output),180);
+        }
     }else{
         char *argv[]={(char*)"dpkg",(char*)"-i",path,NULL};
         rc=spawn_capture_timeout(dpkg,argv,output,sizeof(output),180);
@@ -644,19 +749,32 @@ int rt_package_install_deb(const char *package_id, RTPackageOperation *op) {
     op->post_checked=1;
     op->post_passed=rc==0&&verify_deb_installed(info.expected_identifier);
     op->ok=op->post_passed;
-    snprintf(op->result,sizeof(op->result),op->ok?"success":"failed");
-    snprintf(op->message,sizeof(op->message),op->ok?"DEB package installed and verified":"DEB installation failed or post-condition did not pass");
+    snprintf(op->result,sizeof(op->result),op->ok?(rollback?"rolled_back":"success"):"failed");
+    snprintf(op->message,sizeof(op->message),op->ok?(rollback?"DEB rollback installed and verified":"DEB package installed and verified"):
+        "DEB installation failed or post-condition did not pass");
     if(op->post_passed)snprintf(op->post_detail,sizeof(op->post_detail),"%s completed; dpkg-query reports install ok installed",used_apt?"apt-get":"dpkg");
     else snprintf(op->post_detail,sizeof(op->post_detail),"%s exit=%d or package status mismatch",used_apt?"apt-get":"dpkg",rc);
-    update_state(package_id,op->ok?"installed":"failed",op->ok?"installed":NULL,op->ok?NULL:"dpkg install/post-condition failed");
+    if(op->ok){
+        activate_package(&info,rollback?"rollback-installed":"installed");
+        record_event(&info,rollback?"rollback":"install","bootstrap.procursus",op->result);
+    }else update_result_only(package_id,NULL,"deb install/post-condition failed");
     return op->ok;
 }
 
-int rt_package_install_ipa(const char *package_id, RTPackageOperation *op) {
+int rt_package_install_deb(const char *package_id, RTPackageOperation *op) {
+    return install_deb_internal(package_id,0,op);
+}
+
+int rt_package_rollback_deb(const char *package_id, RTPackageOperation *op) {
+    return install_deb_internal(package_id,1,op);
+}
+
+static int install_ipa_internal(const char *package_id, int rollback, RTPackageOperation *op) {
     operation_init(op);
     RTPackageInfo info;
-    if(!rt_package_get(package_id,&info)||strcmp(info.state,"ready")||(strcmp(info.format,"ipa")&&strcmp(info.format,"tipa"))){
-        snprintf(op->message,sizeof(op->message),"IPA/TIPA package is not ready");
+    if(!rt_package_get(package_id,&info)||(strcmp(info.format,"ipa")&&strcmp(info.format,"tipa"))||
+       (rollback?!rollbackable_state(info.state):!installable_state(info.state))){
+        snprintf(op->message,sizeof(op->message),rollback?"IPA/TIPA rollback artifact is not retained":"IPA/TIPA package is not installable");
         return 0;
     }
     char path[1024]={0},helper[1024]={0};
@@ -674,11 +792,69 @@ int rt_package_install_ipa(const char *package_id, RTPackageOperation *op) {
     op->post_checked=1;
     op->post_passed=helper_success&&verify_app_installed(info.expected_identifier);
     op->ok=op->post_passed;
-    snprintf(op->result,sizeof(op->result),op->ok?"success":"failed");
-    snprintf(op->message,sizeof(op->message),op->ok?"TrollStore package installed and verified":"TrollStore install failed or installed bundle could not be verified");
+    snprintf(op->result,sizeof(op->result),op->ok?(rollback?"rolled_back":"success"):"failed");
+    snprintf(op->message,sizeof(op->message),op->ok?(rollback?"TrollStore rollback installed and verified":"TrollStore package installed and verified"):
+        "TrollStore install failed or installed bundle could not be verified");
     if(op->post_passed)snprintf(op->post_detail,sizeof(op->post_detail),"uicache resolves expected bundle identifier");
     else snprintf(op->post_detail,sizeof(op->post_detail),"helper exit=%d or bundle verification failed",rc);
-    update_state(package_id,op->ok?"installed":"failed",op->ok?"installed":NULL,op->ok?NULL:"trollstorehelper/post-condition failed");
+    if(op->ok){
+        activate_package(&info,rollback?"rollback-installed":"installed");
+        record_event(&info,rollback?"rollback":"install","package.trollstore",op->result);
+    }else update_result_only(package_id,NULL,"trollstorehelper/post-condition failed");
+    return op->ok;
+}
+
+int rt_package_install_ipa(const char *package_id, RTPackageOperation *op) {
+    return install_ipa_internal(package_id,0,op);
+}
+
+int rt_package_rollback_ipa(const char *package_id, RTPackageOperation *op) {
+    return install_ipa_internal(package_id,1,op);
+}
+
+int rt_package_uninstall_deb(const char *package_id, RTPackageOperation *op) {
+    operation_init(op);
+    RTPackageInfo info;
+    if(!rt_package_get(package_id,&info)||strcmp(info.format,"deb")||strcmp(info.state,"installed")){
+        snprintf(op->message,sizeof(op->message),"Managed DEB package is not installed");return 0;
+    }
+    char dpkg[1024]={0};
+    if(!rt_provider_resolve_executable("bootstrap.procursus",dpkg,sizeof(dpkg))){
+        snprintf(op->result,sizeof(op->result),"provider_unavailable");snprintf(op->message,sizeof(op->message),"Procursus dpkg provider unavailable");return 0;
+    }
+    char output[8192]={0};
+    char *argv[]={(char*)"dpkg",(char*)"-r",info.expected_identifier,NULL};
+    op->executed=1;
+    int rc=spawn_capture_timeout(dpkg,argv,output,sizeof(output),180);
+    op->post_checked=1;op->post_passed=rc==0&&verify_deb_absent(info.expected_identifier);op->ok=op->post_passed;
+    snprintf(op->result,sizeof(op->result),op->ok?"uninstalled":"failed");
+    snprintf(op->message,sizeof(op->message),op->ok?"DEB package uninstalled and verified":"DEB uninstall failed or package remains installed");
+    snprintf(op->post_detail,sizeof(op->post_detail),op->ok?"dpkg-query no longer reports installed":"dpkg exit=%d or package remains installed",rc);
+    if(op->ok){update_state(package_id,"uninstalled","uninstalled",NULL);record_event(&info,"uninstall","bootstrap.procursus","uninstalled");}
+    else update_result_only(package_id,NULL,"deb uninstall/post-condition failed");
+    return op->ok;
+}
+
+int rt_package_uninstall_ipa(const char *package_id, RTPackageOperation *op) {
+    operation_init(op);
+    RTPackageInfo info;
+    if(!rt_package_get(package_id,&info)||(strcmp(info.format,"ipa")&&strcmp(info.format,"tipa"))||strcmp(info.state,"installed")){
+        snprintf(op->message,sizeof(op->message),"Managed TrollStore package is not installed");return 0;
+    }
+    char helper[1024]={0};
+    if(!rt_provider_resolve_executable("package.trollstore",helper,sizeof(helper))){
+        snprintf(op->result,sizeof(op->result),"provider_unavailable");snprintf(op->message,sizeof(op->message),"TrollStore helper provider unavailable");return 0;
+    }
+    char output[8192]={0};
+    char *argv[]={(char*)"trollstorehelper",(char*)"uninstall",info.expected_identifier,NULL};
+    op->executed=1;
+    int rc=spawn_capture_timeout(helper,argv,output,sizeof(output),180);
+    op->post_checked=1;op->post_passed=rc==0&&verify_app_absent(info.expected_identifier);op->ok=op->post_passed;
+    snprintf(op->result,sizeof(op->result),op->ok?"uninstalled":"failed");
+    snprintf(op->message,sizeof(op->message),op->ok?"TrollStore app uninstalled and verified":"TrollStore uninstall failed or bundle remains installed");
+    snprintf(op->post_detail,sizeof(op->post_detail),op->ok?"uicache no longer resolves expected bundle identifier":"helper exit=%d or bundle remains installed",rc);
+    if(op->ok){update_state(package_id,"uninstalled","uninstalled",NULL);record_event(&info,"uninstall","package.trollstore","uninstalled");}
+    else update_result_only(package_id,NULL,"trollstore uninstall/post-condition failed");
     return op->ok;
 }
 
@@ -721,6 +897,38 @@ char *rt_packages_json(void) {
     }
     sqlite3_finalize(st);
     sqlite3_close(db);
+    snprintf(out+used,65536-used,"],\"count\":%d}",rows);
+    return out;
+}
+
+char *rt_package_history_json(void) {
+    sqlite3 *db=NULL;
+    if(!db_open(&db))return NULL;
+    sqlite3_stmt *st=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "SELECT sequence,package_id,identifier,format,action,provider_id,result,occurred_at FROM package_events ORDER BY sequence DESC LIMIT 200",
+        -1,&st,NULL);
+    if(rc!=SQLITE_OK){sqlite3_close(db);return NULL;}
+    char *out=calloc(1,65536);
+    if(!out){sqlite3_finalize(st);sqlite3_close(db);return NULL;}
+    size_t used=(size_t)snprintf(out,65536,"{\"schemaVersion\":1,\"events\":[");
+    int rows=0;
+    while(sqlite3_step(st)==SQLITE_ROW){
+        char package_id[192]={0},identifier[512]={0},format[32]={0},action[64]={0},provider[256]={0},result[128]={0};
+        json_escape_small((const char*)sqlite3_column_text(st,1),package_id,sizeof(package_id));
+        json_escape_small((const char*)sqlite3_column_text(st,2),identifier,sizeof(identifier));
+        json_escape_small((const char*)sqlite3_column_text(st,3),format,sizeof(format));
+        json_escape_small((const char*)sqlite3_column_text(st,4),action,sizeof(action));
+        json_escape_small((const char*)sqlite3_column_text(st,5),provider,sizeof(provider));
+        json_escape_small((const char*)sqlite3_column_text(st,6),result,sizeof(result));
+        int n=snprintf(out+used,65536-used,
+            "%s{\"sequence\":%lld,\"packageId\":\"%s\",\"identifier\":\"%s\",\"format\":\"%s\",\"action\":\"%s\",\"providerId\":\"%s\",\"result\":\"%s\",\"occurredAt\":%lld}",
+            rows?",":"",(long long)sqlite3_column_int64(st,0),package_id,identifier,format,action,provider,result,
+            (long long)sqlite3_column_int64(st,7));
+        if(n<0||(size_t)n>=65536-used)break;
+        used+=(size_t)n;rows++;
+    }
+    sqlite3_finalize(st);sqlite3_close(db);
     snprintf(out+used,65536-used,"],\"count\":%d}",rows);
     return out;
 }

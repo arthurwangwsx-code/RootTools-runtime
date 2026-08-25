@@ -147,6 +147,7 @@ def main() -> int:
             assert hello["features"]["providerRegistry"] is True
             assert hello["features"]["packageProviderPlanning"] is True
             assert hello["features"]["packageController"] is True
+            assert hello["features"]["packageLifecycle"] is True
             assert hello["features"]["packageChunkBytes"] == 262144
             assert hello["revisionAvailable"] is True
             initial_revision = hello["revision"]
@@ -242,6 +243,25 @@ def main() -> int:
             )
             assert install_owner["result"] == "provider_unavailable"
             assert install_owner["executed"] is False
+            uninstall_agent = action(
+                port,
+                args.agent_token,
+                "device.package.uninstall-deb",
+                confirmed=True,
+                parameters={"packageId": package_id},
+            )
+            assert uninstall_agent["result"] == "confirmation_required"
+            rollback_agent = action(
+                port,
+                args.agent_token,
+                "device.package.rollback-deb",
+                confirmed=True,
+                parameters={"packageId": package_id},
+            )
+            assert rollback_agent["result"] == "confirmation_required"
+            status, package_history = request(port, args.agent_token, "GET", "/v1/packages/history")
+            assert status == 200
+            assert package_history["events"] == []
             package_discard = action(
                 port,
                 args.agent_token,
