@@ -35,6 +35,10 @@ const char *rt_risk_name(RTRiskLevel risk);
 int rt_capability_effective_enabled(const RTCapability *capability);
 int rt_capability_set_enabled(const char *id, int enabled);
 RTPolicyDecision rt_policy_evaluate(const RTCapability *capability, int confirmed);
+int rt_policy_mode_get(char *out, size_t cap);
+int rt_policy_set_mode(const char *mode);
+int rt_policy_developer_mode_enabled(void);
+char *rt_policy_json(void);
 char *rt_capabilities_text(void);
 char *rt_capabilities_json(void);
 

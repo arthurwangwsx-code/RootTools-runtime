@@ -46,6 +46,28 @@ int main(int argc, char **argv) {
     assert(rt_capability_set_enabled("device.app.launch", 1) == 1);
     assert(rt_capability_effective_enabled(launch) == 1);
 
+    char mode[32] = {0};
+    assert(rt_policy_mode_get(mode, sizeof(mode)) == 1);
+    assert(!strcmp(mode, "custom"));
+    assert(rt_policy_set_mode("restricted") == 1);
+    memset(mode, 0, sizeof(mode));
+    assert(rt_policy_mode_get(mode, sizeof(mode)) == 1);
+    assert(!strcmp(mode, "restricted"));
+    assert(rt_capability_effective_enabled(launch) == 0);
+    assert(rt_capability_effective_enabled(lock_observe) == 1);
+    assert(rt_policy_developer_mode_enabled() == 0);
+    assert(rt_policy_set_mode("developer") == 1);
+    assert(rt_policy_developer_mode_enabled() == 1);
+    assert(rt_capability_effective_enabled(launch) == 1);
+    assert(rt_policy_evaluate(rt_capability_find("device.process.terminate"), 1).allowed == 1);
+    assert(rt_capability_effective_enabled(rt_capability_find("device.raw-shell")) == 0);
+    char *policy_json = rt_policy_json();
+    assert(policy_json != NULL);
+    assert(strstr(policy_json, "\"mode\":\"developer\"") != NULL);
+    assert(strstr(policy_json, "\"ownerR2AutoApproval\":true") != NULL);
+    assert(strstr(policy_json, "\"r3HardBlocked\":true") != NULL);
+    free(policy_json);
+
     const RTCapability *process = rt_capability_find("device.process.terminate");
     assert(process != NULL);
     RTPolicyDecision missing_confirmation = rt_policy_evaluate(process, 0);
@@ -73,6 +95,9 @@ int main(int argc, char **argv) {
     assert(strstr(json, "\"rawPrivilegedShellExposed\":false") != NULL);
     free(json);
 
+    char mode_path[320];
+    snprintf(mode_path, sizeof(mode_path), "%s/.mode", policy_dir);
+    unlink(mode_path);
     rmdir(policy_dir);
     unsetenv("ROOTTOOLS_POLICY_DIR");
 

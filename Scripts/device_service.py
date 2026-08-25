@@ -118,6 +118,9 @@ class DeviceServiceClient:
     def providers(self) -> dict:
         return self.request("GET", "/v1/providers/catalog")
 
+    def policy(self) -> dict:
+        return self.request("GET", "/v1/policy")
+
     def principals(self) -> dict:
         return self.request("GET", "/v1/principals/catalog")
 
@@ -247,6 +250,23 @@ class DeviceServiceClient:
             {"principalId": principal_id, "grantedCapabilityId": capability_id},
             confirmed=confirmed,
         )
+
+    def set_policy_mode(self, mode: str, confirmed: bool) -> dict:
+        return self.action("device.policy.set-mode", {"mode": mode}, confirmed=confirmed)
+
+    def grant_all_principal(self, principal_id: str, confirmed: bool) -> dict:
+        catalog = self.capabilities().get("capabilities", [])
+        grantable = [item["id"] for item in catalog if item.get("risk") in {"R0", "R1"} and item.get("hardEnabled", item.get("enabled", False))]
+        existing = {item["capabilityId"] for item in self.principal_grants(principal_id).get("grants", []) if item.get("active")}
+        applied: list[str] = []
+        for capability_id in grantable:
+            if capability_id in existing:
+                continue
+            receipt = self.grant_principal(principal_id, capability_id, confirmed=confirmed)
+            if not receipt.get("ok"):
+                return {"ok": False, "failedCapabilityId": capability_id, "applied": applied, "receipt": receipt}
+            applied.append(capability_id)
+        return {"ok": True, "principalId": principal_id, "applied": applied, "grantCount": len(self.principal_grants(principal_id).get("grants", []))}
 
     def stage_package(self, package_path: Path, expected_identifier: str = "") -> dict:
         package_path = package_path.resolve()
@@ -379,6 +399,10 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status")
     sub.add_parser("capabilities")
     sub.add_parser("providers")
+    sub.add_parser("policy")
+    policy_mode = sub.add_parser("policy-mode", help="R2 owner action: switch restricted/standard/developer permission mode")
+    policy_mode.add_argument("mode", choices=("restricted", "standard", "developer"))
+    policy_mode.add_argument("--confirm", action="store_true", required=True)
     sub.add_parser("principal-list", help="Owner/admin only: list named command principals")
     principal_create = sub.add_parser("principal-create", help="R2 owner action: create a named host/app/skill/automation principal")
     principal_create.add_argument("principal_id")
@@ -400,6 +424,9 @@ def build_parser() -> argparse.ArgumentParser:
     principal_ungrant.add_argument("principal_id")
     principal_ungrant.add_argument("capability_id")
     principal_ungrant.add_argument("--confirm", action="store_true", required=True)
+    principal_grant_all = sub.add_parser("principal-grant-all", help="Owner convenience: grant every compiled R0/R1 capability")
+    principal_grant_all.add_argument("principal_id")
+    principal_grant_all.add_argument("--confirm", action="store_true", required=True)
     package_plan = sub.add_parser("package-plan")
     package_plan.add_argument("format", choices=("deb", "ipa", "tipa"))
     sub.add_parser("package-list")
@@ -515,6 +542,10 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.capabilities()
     if args.command == "providers":
         return client.providers()
+    if args.command == "policy":
+        return client.policy()
+    if args.command == "policy-mode":
+        return client.set_policy_mode(args.mode, args.confirm)
     if args.command == "principal-list":
         return client.principals()
     if args.command == "principal-create":
@@ -527,6 +558,8 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.grant_principal(args.principal_id, args.capability_id, args.confirm, args.expires_at)
     if args.command == "principal-ungrant":
         return client.ungrant_principal(args.principal_id, args.capability_id, args.confirm)
+    if args.command == "principal-grant-all":
+        return client.grant_all_principal(args.principal_id, args.confirm)
     if args.command == "package-plan":
         return client.package_plan(args.format)
     if args.command == "package-list":

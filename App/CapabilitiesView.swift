@@ -4,6 +4,8 @@ import UniformTypeIdentifiers
 struct CapabilitiesView: View {
     @EnvironmentObject private var store: DeviceStore
     @State private var mutatingID: String?
+    @State private var applyingMode = false
+    @State private var pendingDeveloperMode = false
     @State private var errorMessage: String?
 
     private let risks = ["R0", "R1", "R2", "R3"]
@@ -11,10 +13,51 @@ struct CapabilitiesView: View {
     var body: some View {
         List {
             Section {
-                Label("Agent credentials can execute enabled capabilities but cannot change this policy.", systemImage: "person.badge.shield.checkmark.fill")
-                Label("R3 and raw privileged shell are hard-disabled in the daemon binary.", systemImage: "lock.shield.fill")
+                policyModeRow(
+                    mode: "restricted",
+                    title: "Restricted",
+                    subtitle: "Observation only. R1/R2 operations are disabled except the Owner policy recovery switch.",
+                    symbol: "lock.shield.fill"
+                )
+                policyModeRow(
+                    mode: "standard",
+                    title: "Standard",
+                    subtitle: "All compiled capabilities are available; R2 still needs explicit Owner confirmation.",
+                    symbol: "checkmark.shield.fill"
+                )
+                policyModeRow(
+                    mode: "developer",
+                    title: "Developer",
+                    subtitle: "One-tap full compiled surface for the local Owner. R2 Owner approval is automatic.",
+                    symbol: "hammer.fill"
+                )
+                if let policy = store.policyStatus {
+                    HStack(spacing: 8) {
+                        badge("R0 \(policy.enabled.R0)")
+                        badge("R1 \(policy.enabled.R1)")
+                        badge("R2 \(policy.enabled.R2)")
+                        if policy.disabledCount > 0 { badge("\(policy.disabledCount) OFF") }
+                    }
+                    Text(policy.mode == "custom"
+                         ? "Individual capability changes moved the device into Custom mode."
+                         : "Current mode: \(policy.mode.capitalized)")
+                        .font(.caption2)
+                        .foregroundStyle(.secondary)
+                }
             } header: {
-                Text("Owner Policy")
+                Text("Permission Mode")
+            } footer: {
+                Text("Developer Mode never enables R3/raw shell and never expands a Host, App, Skill or Automation principal's grants. It only maximizes the local Owner execution surface.")
+            }
+
+            Section {
+                Label("Layer 1 · hard policy is compiled into the daemon", systemImage: "cpu")
+                Label("Layer 2 · Owner mode can narrow the compiled surface", systemImage: "slider.horizontal.3")
+                Label("Layer 3 · each remote principal needs an explicit R0/R1 grant", systemImage: "person.badge.key.fill")
+                Label("Layer 4 · runtime lock/provider/post-condition checks still apply", systemImage: "checkmark.circle.badge.questionmark")
+                Label("R3 and raw privileged shell remain hard-disabled", systemImage: "lock.shield.fill")
+            } header: {
+                Text("Permission Model")
             }
 
             ForEach(risks, id: \.self) { risk in
@@ -40,6 +83,48 @@ struct CapabilitiesView: View {
             if store.capabilities.isEmpty { await store.refresh() }
         }
         .refreshable { await store.refresh() }
+        .confirmationDialog(
+            "Enable Developer Mode?",
+            isPresented: $pendingDeveloperMode,
+            titleVisibility: .visible
+        ) {
+            Button("Enable Developer Mode", role: .destructive) {
+                Task { await applyMode("developer") }
+            }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("All compiled R0/R1/R2 capabilities will be enabled for the local Owner and future Owner R2 actions will not require a second confirmation. Remote principals keep their existing grants. R3/raw shell stay blocked.")
+        }
+    }
+
+    @ViewBuilder
+    private func policyModeRow(mode: String, title: String, subtitle: String, symbol: String) -> some View {
+        let selected = store.policyStatus?.mode == mode
+        Button {
+            if mode == "developer" && !selected {
+                pendingDeveloperMode = true
+            } else if !selected {
+                Task { await applyMode(mode) }
+            }
+        } label: {
+            HStack(spacing: 12) {
+                Image(systemName: symbol)
+                    .frame(width: 34, height: 34)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 10))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text(title).font(.subheadline.weight(.semibold)).foregroundStyle(.primary)
+                    Text(subtitle).font(.caption2).foregroundStyle(.secondary)
+                }
+                Spacer()
+                if applyingMode && !selected {
+                    ProgressView()
+                } else if selected {
+                    Image(systemName: "checkmark.circle.fill").foregroundStyle(.green)
+                }
+            }
+        }
+        .buttonStyle(.plain)
+        .disabled(applyingMode)
     }
 
     @ViewBuilder
@@ -99,6 +184,20 @@ struct CapabilitiesView: View {
         defer { mutatingID = nil }
         do {
             try await store.setCapabilityEnabled(enabled, capabilityID: capability.id)
+        } catch {
+            errorMessage = error.localizedDescription
+            await store.refresh()
+        }
+    }
+
+    @MainActor
+    private func applyMode(_ mode: String) async {
+        guard !applyingMode else { return }
+        applyingMode = true
+        errorMessage = nil
+        defer { applyingMode = false }
+        do {
+            try await store.setPolicyMode(mode)
         } catch {
             errorMessage = error.localizedDescription
             await store.refresh()

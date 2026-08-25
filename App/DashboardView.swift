@@ -408,6 +408,8 @@ struct SettingsHubView: View {
                         NavigationLink(value: ToolKind.providers) { HubRow(tool: .providers) }
                     }
 
+                    DeveloperModeQuickCard()
+
                     HubSection(title: "Maintenance", subtitle: "Health, audit and recovery surfaces") {
                         NavigationLink(value: ToolKind.diagnostics) { HubRow(tool: .diagnostics) }
                         Divider().padding(.leading, 54)
@@ -435,6 +437,74 @@ struct SettingsHubView: View {
             .background(Color(uiColor: .systemGroupedBackground).ignoresSafeArea())
             .navigationTitle("Settings")
             .navigationDestination(for: ToolKind.self) { tool in RootToolDestination(tool: tool) }
+        }
+    }
+}
+
+private struct DeveloperModeQuickCard: View {
+    @EnvironmentObject private var store: DeviceStore
+    @State private var applying = false
+    @State private var confirmEnable = false
+    @State private var errorMessage: String?
+
+    private var enabled: Bool { store.policyStatus?.developerMode == true }
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(spacing: 12) {
+                Image(systemName: enabled ? "hammer.circle.fill" : "hammer.circle")
+                    .font(.title2)
+                    .frame(width: 44, height: 44)
+                    .background((enabled ? Color.orange : Color.accentColor).opacity(0.14), in: RoundedRectangle(cornerRadius: 13))
+                VStack(alignment: .leading, spacing: 3) {
+                    Text("Developer Mode").font(.headline)
+                    Text(enabled ? "Full local Owner capability surface is enabled" : "One action enables the full compiled Owner surface")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                Spacer()
+                if applying {
+                    ProgressView()
+                } else {
+                    Toggle("", isOn: Binding(
+                        get: { enabled },
+                        set: { value in
+                            if value { confirmEnable = true }
+                            else { Task { await setMode("standard") } }
+                        }
+                    ))
+                    .labelsHidden()
+                }
+            }
+            Text("Developer Mode enables every compiled R0/R1/R2 capability for the on-device Owner and removes repeated R2 confirmations. Named principals keep their own grants. R3/raw shell remain blocked.")
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            if let errorMessage {
+                Text(errorMessage).font(.caption2).foregroundStyle(.red).textSelection(.enabled)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .padding(16)
+        .background(Color(uiColor: .secondarySystemGroupedBackground), in: RoundedRectangle(cornerRadius: 20))
+        .confirmationDialog("Enable Developer Mode?", isPresented: $confirmEnable, titleVisibility: .visible) {
+            Button("Enable", role: .destructive) { Task { await setMode("developer") } }
+            Button("Cancel", role: .cancel) {}
+        } message: {
+            Text("This expands the local Owner surface to all compiled non-R3 capabilities. Remote principals are not elevated.")
+        }
+    }
+
+    @MainActor
+    private func setMode(_ mode: String) async {
+        guard !applying else { return }
+        applying = true
+        errorMessage = nil
+        defer { applying = false }
+        do {
+            try await store.setPolicyMode(mode)
+        } catch {
+            errorMessage = error.localizedDescription
+            await store.refresh()
         }
     }
 }

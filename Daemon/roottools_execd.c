@@ -36,7 +36,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.14.0"
+#define VERSION "0.15.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1026,6 +1026,13 @@ static void send_capability_catalog(int fd) {
     free(body);
 }
 
+static void send_policy_status(int fd) {
+    char *body=rt_policy_json();
+    if(!body){send_error(fd,503,"execution policy unavailable");return;}
+    send_response(fd,200,"application/json",body);
+    free(body);
+}
+
 static void send_error(int fd, int code, const char *message) {
     char escaped[1024]={0}, body[1200]={0}; json_escape(message, escaped, sizeof(escaped));
     snprintf(body,sizeof(body),"{\"ok\":false,\"error\":\"%s\"}",escaped); send_response(fd,code,"application/json",body);
@@ -1326,7 +1333,7 @@ static void load_action_context(
     // the on-device Admin/UI credential may turn an explicit UI confirmation
     // into a daemon-side R2 confirmation. Future unattended approval must use
     // a separate signed/one-shot grant rather than this boolean.
-    context->confirmed=trusted_confirmation_source&&requested_confirmation;
+    context->confirmed=trusted_confirmation_source&&(requested_confirmation||rt_policy_developer_mode_enabled());
 }
 
 static int safe_bundle_id(const char *value) {
@@ -1799,7 +1806,7 @@ static void send_hello(int fd, RTAuthRole role, const char *caller) {
         "{\"service\":\"roottools.device-service\",\"schemaVersion\":%d,\"daemonVersion\":\"%s\","
         "\"authenticatedRole\":\"%s\",\"authenticatedCaller\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
-        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
+        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"permissionProfiles\":true,\"developerMode\":true,\"durableIdempotency\":true,"
         "\"expectedRevision\":true,\"eventAudit\":true,\"durableTasks\":true,\"semanticUIAutomation\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),escaped_caller,machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
@@ -2445,6 +2452,29 @@ static void execute_principal_ungrant(const char *body, RTActionExecution *execu
     snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"grant is absent":"grant remains active");
 }
 
+static void execute_policy_set_mode(const char *body, RTActionExecution *execution) {
+    char mode[32]={0};
+    if(!json_get_string(body,"mode",mode,sizeof(mode))){
+        snprintf(execution->message,sizeof(execution->message),"mode is required");return;
+    }
+    if(strcmp(mode,"restricted")&&strcmp(mode,"standard")&&strcmp(mode,"developer")){
+        snprintf(execution->target,sizeof(execution->target),"mode=%s",mode);
+        snprintf(execution->result,sizeof(execution->result),"denied");
+        snprintf(execution->message,sizeof(execution->message),"mode must be restricted, standard, or developer");return;
+    }
+    char before[32]={0},after[32]={0};
+    (void)rt_policy_mode_get(before,sizeof(before));
+    snprintf(execution->target,sizeof(execution->target),"mode=%s",mode);
+    execution->executed=1;
+    execution->post_checked=1;
+    int persisted=rt_policy_set_mode(mode);
+    execution->post_passed=persisted&&rt_policy_mode_get(after,sizeof(after))&&!strcmp(after,mode);
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"success":"failed");
+    snprintf(execution->message,sizeof(execution->message),execution->ok?"Execution policy mode changed":"Execution policy mode could not be persisted");
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"mode=%s previous=%s":"policy mode verification failed",mode,before[0]?before:"unknown");
+}
+
 static int ui_text_valid(const char *text) {
     size_t length=text?strlen(text):0;
     if(!length||length>1024)return 0;
@@ -2762,6 +2792,7 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"principal.revoke")) execute_principal_revoke(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"principal.grant")) execute_principal_grant(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"principal.ungrant")) execute_principal_ungrant(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"policy.set-mode")) execute_policy_set_mode(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.queue-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"task.submit-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,context.caller,trusted_confirmation_source,&execution);
@@ -2860,6 +2891,7 @@ static void handle(int fd) {
         if(auth_role!=RT_AUTH_ADMIN)send_error(fd,403,"principal grants are owner-only");
         else if(authorize_read_capability(fd,"device.principal.grants.read",caller))send_principal_grants(fd,body);
     }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/policy")) { if(authorize_read_capability(fd,"device.policy.read",caller)) send_policy_status(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/self-update/status")) { if(authorize_read_capability(fd,"device.self-update.status",caller)) send_self_update_status(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe",caller)) send_lock_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe",caller)) send_automation_state(fd); }

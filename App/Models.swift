@@ -165,6 +165,24 @@ struct CapabilityCatalog: Codable, Equatable {
     var invariants: CapabilityInvariants
 }
 
+struct PermissionPolicyEnabledCounts: Codable, Equatable {
+    var R0: Int
+    var R1: Int
+    var R2: Int
+}
+
+struct PermissionPolicyStatus: Codable, Equatable {
+    var schemaVersion: Int
+    var mode: String
+    var developerMode: Bool
+    var ownerR2AutoApproval: Bool
+    var principalR2PersistentGrants: Bool
+    var r3HardBlocked: Bool
+    var rawPrivilegedShellExposed: Bool
+    var enabled: PermissionPolicyEnabledCounts
+    var disabledCount: Int
+}
+
 struct ProviderDescriptor: Codable, Identifiable, Equatable {
     var id: String
     var title: String

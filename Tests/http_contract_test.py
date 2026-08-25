@@ -149,6 +149,8 @@ def main() -> int:
             assert hello["authenticatedRole"] == "agent"
             assert hello["features"]["commandGateway"] is True
             assert hello["features"]["namedPrincipals"] is True
+            assert hello["features"]["permissionProfiles"] is True
+            assert hello["features"]["developerMode"] is True
             assert hello["features"]["durableIdempotency"] is True
             assert hello["features"]["durableTasks"] is True
             assert hello["features"]["semanticUIAutomation"] is True
@@ -167,6 +169,70 @@ def main() -> int:
             assert status == 200
             assert owner_hello["authenticatedRole"] == "owner"
             assert owner_hello["authenticatedCaller"] == "roottools-ui"
+
+            status, policy = request(port, args.admin_token, "GET", "/v1/policy")
+            assert status == 200
+            assert policy["mode"] == "standard"
+            assert policy["developerMode"] is False
+            assert policy["ownerR2AutoApproval"] is False
+            assert policy["r3HardBlocked"] is True
+            assert policy["rawPrivilegedShellExposed"] is False
+
+            agent_mode_change = action(
+                port,
+                args.agent_token,
+                "device.policy.set-mode",
+                confirmed=True,
+                parameters={"mode": "developer"},
+            )
+            assert agent_mode_change["ok"] is False
+            assert agent_mode_change["result"] == "confirmation_required"
+
+            restricted_mode = action(
+                port,
+                args.admin_token,
+                "device.policy.set-mode",
+                confirmed=True,
+                parameters={"mode": "restricted"},
+            )
+            assert restricted_mode["ok"] is True
+            status, restricted_policy = request(port, args.admin_token, "GET", "/v1/policy")
+            assert status == 200
+            assert restricted_policy["mode"] == "restricted"
+            denied_launch_while_restricted = action(
+                port,
+                args.admin_token,
+                "device.app.launch",
+                parameters={"bundleID": "com.example.fixture"},
+            )
+            assert denied_launch_while_restricted["ok"] is False
+            assert denied_launch_while_restricted["policy"] == "deny"
+
+            developer_mode = action(
+                port,
+                args.admin_token,
+                "device.policy.set-mode",
+                confirmed=True,
+                parameters={"mode": "developer"},
+            )
+            assert developer_mode["ok"] is True
+            status, developer_policy = request(port, args.admin_token, "GET", "/v1/policy")
+            assert status == 200
+            assert developer_policy["developerMode"] is True
+            assert developer_policy["ownerR2AutoApproval"] is True
+
+            # Developer Mode auto-confirms only the local Owner. Leaving the
+            # mode therefore succeeds without a second confirmed=true flag.
+            standard_mode = action(
+                port,
+                args.admin_token,
+                "device.policy.set-mode",
+                confirmed=False,
+                parameters={"mode": "standard"},
+            )
+            assert standard_mode["ok"] is True
+            status, policy = request(port, args.admin_token, "GET", "/v1/policy")
+            assert status == 200 and policy["mode"] == "standard"
 
             status, principal_catalog = request(port, args.admin_token, "GET", "/v1/principals/catalog")
             assert status == 200

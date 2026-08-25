@@ -43,6 +43,7 @@ The caller never receives a generic root shell, provider argv, Frida script exec
 
 - future outbound relay initiated by the UID 0 runtime;
 - remote callers receive short-lived scoped grants rather than the owner token;
+- the local Owner may use Developer Mode to expose the full compiled non-R3 surface without expanding remote Principal Grants;
 - no privileged listener is exposed directly to the public internet.
 
 ## Product domains

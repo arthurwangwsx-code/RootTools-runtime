@@ -300,6 +300,7 @@ private struct PrincipalGrantsView: View {
     @State private var grants: [PrincipalGrantDescriptor] = []
     @State private var loading = false
     @State private var mutatingCapabilityID: String?
+    @State private var bulkProgress: String?
     @State private var errorMessage: String?
 
     var body: some View {
@@ -312,6 +313,21 @@ private struct PrincipalGrantsView: View {
                 Text("Only R0 and R1 capabilities can be persistently delegated. R2 always requires a separate owner approval path.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button {
+                    Task { await grantAllDeveloperCapabilities() }
+                } label: {
+                    Label("Grant all R0 / R1", systemImage: "hammer.fill")
+                }
+                .disabled(mutatingCapabilityID != nil || loading)
+                Button(role: .destructive) {
+                    Task { await removeAllGrants() }
+                } label: {
+                    Label("Remove all grants", systemImage: "key.slash.fill")
+                }
+                .disabled(mutatingCapabilityID != nil || loading || grants.allSatisfy { !$0.active })
+                if let bulkProgress {
+                    Text(bulkProgress).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                }
             }
 
             Section("Read access · R0") {
@@ -414,6 +430,62 @@ private struct PrincipalGrantsView: View {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func grantAllDeveloperCapabilities() async {
+        guard mutatingCapabilityID == nil else { return }
+        let grantable = capabilities.filter {
+            ($0.risk == "R0" || $0.risk == "R1") && ($0.hardEnabled ?? $0.enabled)
+        }
+        mutatingCapabilityID = "__bulk__"
+        errorMessage = nil
+        defer {
+            mutatingCapabilityID = nil
+            bulkProgress = nil
+        }
+        do {
+            var completed = 0
+            for capability in grantable where !isGranted(capability.id) {
+                bulkProgress = "Granting \(completed + 1) / \(grantable.count)"
+                let receipt = try await DaemonClient.shared.grantPrincipal(
+                    principalID: principal.principalId,
+                    capabilityID: capability.id
+                )
+                guard receipt.ok else { throw DaemonError.actionFailed(receipt.message) }
+                completed += 1
+            }
+            grants = try await DaemonClient.shared.principalGrants(principalID: principal.principalId).grants
+        } catch {
+            errorMessage = error.localizedDescription
+            grants = (try? await DaemonClient.shared.principalGrants(principalID: principal.principalId).grants) ?? grants
+        }
+    }
+
+    @MainActor
+    private func removeAllGrants() async {
+        guard mutatingCapabilityID == nil else { return }
+        let active = grants.filter(\.active)
+        mutatingCapabilityID = "__bulk__"
+        errorMessage = nil
+        defer {
+            mutatingCapabilityID = nil
+            bulkProgress = nil
+        }
+        do {
+            for (index, grant) in active.enumerated() {
+                bulkProgress = "Removing \(index + 1) / \(active.count)"
+                let receipt = try await DaemonClient.shared.ungrantPrincipal(
+                    principalID: principal.principalId,
+                    capabilityID: grant.capabilityId
+                )
+                guard receipt.ok else { throw DaemonError.actionFailed(receipt.message) }
+            }
+            grants = try await DaemonClient.shared.principalGrants(principalID: principal.principalId).grants
+        } catch {
+            errorMessage = error.localizedDescription
+            grants = (try? await DaemonClient.shared.principalGrants(principalID: principal.principalId).grants) ?? grants
         }
     }
 }

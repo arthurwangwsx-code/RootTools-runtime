@@ -105,6 +105,14 @@ private struct PrincipalRevokeBody: Codable {
     var confirmed: Bool
 }
 
+private struct PolicyModeBody: Codable {
+    var capabilityId: String
+    var mode: String
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
 private struct PrincipalGrantBody: Codable {
     var capabilityId: String
     var principalId: String
@@ -227,6 +235,11 @@ final class DaemonClient {
     func capabilityCatalog() async throws -> CapabilityCatalog {
         let data = try await request(path: "/v1/capabilities/catalog")
         return try decoder.decode(CapabilityCatalog.self, from: data)
+    }
+
+    func policyStatus() async throws -> PermissionPolicyStatus {
+        let data = try await request(path: "/v1/policy")
+        return try decoder.decode(PermissionPolicyStatus.self, from: data)
     }
 
     func providerCatalog() async throws -> ProviderCatalog {
@@ -576,6 +589,20 @@ final class DaemonClient {
         )
     }
 
+    func setPolicyMode(_ mode: String) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: PolicyModeBody(
+                capabilityId: "device.policy.set-mode",
+                mode: mode,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: true
+            ),
+            response: ActionReceipt.self
+        )
+    }
+
     func grantPrincipal(principalID: String, capabilityID: String, expiresAt: Int64? = nil) async throws -> ActionReceipt {
         try await post(
             path: "/v1/commands/submit",
@@ -692,6 +719,7 @@ final class DeviceStore: ObservableObject {
     @Published var capabilities: [DeviceCapabilityDescriptor] = []
     @Published var capabilityInvariants: CapabilityInvariants?
     @Published var providers: [ProviderDescriptor] = []
+    @Published var policyStatus: PermissionPolicyStatus?
     @Published var daemonReachable = false
     @Published var lastError: String?
     @Published var lastRefresh: Date?
@@ -710,12 +738,14 @@ final class DeviceStore: ObservableObject {
                 capabilityInvariants = nil
             }
             providers = (try? await DaemonClient.shared.providerCatalog())?.providers ?? []
+            policyStatus = try? await DaemonClient.shared.policyStatus()
         } catch {
             daemonReachable = false
             lastError = error.localizedDescription
             capabilities = []
             capabilityInvariants = nil
             providers = []
+            policyStatus = nil
         }
     }
 
@@ -723,5 +753,12 @@ final class DeviceStore: ObservableObject {
         let catalog = try await DaemonClient.shared.setCapabilityEnabled(enabled, capabilityID: capabilityID)
         capabilities = catalog.capabilities
         capabilityInvariants = catalog.invariants
+        policyStatus = try? await DaemonClient.shared.policyStatus()
+    }
+
+    func setPolicyMode(_ mode: String) async throws {
+        let receipt = try await DaemonClient.shared.setPolicyMode(mode)
+        guard receipt.ok else { throw DaemonError.actionFailed(receipt.message) }
+        await refresh()
     }
 }
