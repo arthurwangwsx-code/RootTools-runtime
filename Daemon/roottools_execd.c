@@ -35,7 +35,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.9.0"
+#define VERSION "0.9.1"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1547,12 +1547,89 @@ static void send_hello(int fd, RTAuthRole role) {
     send_response(fd,200,"application/json",response);
 }
 
+static int copy_regular_file_nofollow(const char *source, const char *destination) {
+    int in=open(source,O_RDONLY|O_NOFOLLOW);
+    if(in<0)return 0;
+    struct stat st;
+    if(fstat(in,&st)!=0||!S_ISREG(st.st_mode)){close(in);return 0;}
+    int out=open(destination,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0600);
+    if(out<0){close(in);return 0;}
+    char buffer[65536];
+    int ok=1;
+    for(;;){
+        ssize_t n=read(in,buffer,sizeof(buffer));
+        if(n==0)break;
+        if(n<0){ok=0;break;}
+        size_t offset=0;
+        while(offset<(size_t)n){
+            ssize_t written=write(out,buffer+offset,(size_t)n-offset);
+            if(written<=0){ok=0;break;}
+            offset+=(size_t)written;
+        }
+        if(!ok)break;
+    }
+    if(ok&&fsync(out)!=0)ok=0;
+    close(out); close(in);
+    if(!ok)unlink(destination);
+    return ok;
+}
+
+static int tcc_snapshot_open(const char *db_path, sqlite3 **db_out, char *detail, size_t detail_cap) {
+    const char *snapshot_dir=getenv("ROOTTOOLS_TCC_SNAPSHOT_DIR");
+    if(!snapshot_dir||!snapshot_dir[0])snapshot_dir="/var/mobile/Library/RootTools/tcc-snapshot";
+    if(mkdir("/var/mobile/Library/RootTools",0700)!=0&&errno!=EEXIST&&strstr(snapshot_dir,"/var/mobile/Library/RootTools/")==snapshot_dir){
+        snprintf(detail,detail_cap,"snapshot root mkdir failed: %s",strerror(errno));
+        return 0;
+    }
+    if(mkdir(snapshot_dir,0700)!=0&&errno!=EEXIST){
+        snprintf(detail,detail_cap,"snapshot mkdir failed: %s",strerror(errno));
+        return 0;
+    }
+    char snapshot_db[1536]={0},snapshot_wal[1536]={0},snapshot_shm[1536]={0};
+    char source_wal[1536]={0},source_shm[1536]={0};
+    int n=snprintf(snapshot_db,sizeof(snapshot_db),"%s/TCC.db",snapshot_dir);
+    if(n<=0||(size_t)n>=sizeof(snapshot_db))return 0;
+    snprintf(snapshot_wal,sizeof(snapshot_wal),"%s/TCC.db-wal",snapshot_dir);
+    snprintf(snapshot_shm,sizeof(snapshot_shm),"%s/TCC.db-shm",snapshot_dir);
+    snprintf(source_wal,sizeof(source_wal),"%s-wal",db_path);
+    snprintf(source_shm,sizeof(source_shm),"%s-shm",db_path);
+    unlink(snapshot_db);unlink(snapshot_wal);unlink(snapshot_shm);
+    if(!copy_regular_file_nofollow(db_path,snapshot_db)){
+        snprintf(detail,detail_cap,"snapshot DB copy failed: %s",strerror(errno));
+        return 0;
+    }
+    if(access(source_wal,R_OK)==0&&!copy_regular_file_nofollow(source_wal,snapshot_wal)){
+        snprintf(detail,detail_cap,"snapshot WAL copy failed: %s",strerror(errno));
+        return 0;
+    }
+    if(access(source_shm,R_OK)==0&&!copy_regular_file_nofollow(source_shm,snapshot_shm)){
+        snprintf(detail,detail_cap,"snapshot SHM copy failed: %s",strerror(errno));
+        return 0;
+    }
+    sqlite3 *db=NULL;
+    int rc=sqlite3_open_v2(snapshot_db,&db,SQLITE_OPEN_READWRITE|SQLITE_OPEN_NOMUTEX,NULL);
+    if(rc!=SQLITE_OK){
+        snprintf(detail,detail_cap,"snapshot sqlite open rc=%d error=%s",rc,db?sqlite3_errmsg(db):"unavailable");
+        if(db)sqlite3_close(db);
+        return 0;
+    }
+    sqlite3_exec(db,"PRAGMA query_only=ON",NULL,NULL,NULL);
+    *db_out=db;
+    snprintf(detail,detail_cap,"snapshot:%s",snapshot_db);
+    return 1;
+}
+
 static void send_tcc_permissions(int fd) {
     const char *db_path=getenv("ROOTTOOLS_TCC_DB");
     if(!db_path||!db_path[0])db_path="/var/mobile/Library/TCC/TCC.db";
     sqlite3 *db=NULL;
-    int rc=sqlite3_open_v2(db_path,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_NOMUTEX,NULL);
-    if(rc!=SQLITE_OK){
+    int force_snapshot=0;
+    const char *force=getenv("ROOTTOOLS_TCC_FORCE_SNAPSHOT");
+    if(force&&force[0]&&!strcmp(force,"1"))force_snapshot=1;
+    int rc=SQLITE_CANTOPEN;
+    char source_detail[1536]={0};
+    if(!force_snapshot)rc=sqlite3_open_v2(db_path,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_NOMUTEX,NULL);
+    if(!force_snapshot&&rc!=SQLITE_OK){
         if(db){sqlite3_close(db);db=NULL;}
         // iOS commonly keeps TCC.db in WAL mode. A read-only helper can fail
         // to open the live database if SQLite attempts locking/sidecar access.
@@ -1563,16 +1640,30 @@ static void send_tcc_permissions(int fd) {
         if(n>0&&(size_t)n<sizeof(uri))
             rc=sqlite3_open_v2(uri,&db,SQLITE_OPEN_READONLY|SQLITE_OPEN_URI|SQLITE_OPEN_NOMUTEX,NULL);
     }
-    if(rc!=SQLITE_OK){if(db)sqlite3_close(db);send_error(fd,503,"TCC database unavailable");return;}
+    if(!force_snapshot&&rc==SQLITE_OK){
+        snprintf(source_detail,sizeof(source_detail),"live:%s",db_path);
+    }else{
+        if(db){sqlite3_close(db);db=NULL;}
+        if(!tcc_snapshot_open(db_path,&db,source_detail,sizeof(source_detail))){
+            char error[2048]={0};
+            snprintf(error,sizeof(error),"TCC database unavailable; %s",source_detail[0]?source_detail:"snapshot unavailable");
+            send_error(fd,503,error);return;
+        }
+    }
     const char *sql="SELECT service,client,auth_value,auth_reason,last_modified FROM access ORDER BY service,client LIMIT 512";
     sqlite3_stmt *statement=NULL;
     rc=sqlite3_prepare_v2(db,sql,-1,&statement,NULL);
-    if(rc!=SQLITE_OK){sqlite3_close(db);send_error(fd,503,"TCC schema unavailable");return;}
+    if(rc!=SQLITE_OK){
+        char error[2048]={0};
+        snprintf(error,sizeof(error),"TCC schema unavailable; source=%s rc=%d error=%s",source_detail,rc,sqlite3_errmsg(db));
+        sqlite3_close(db);send_error(fd,503,error);return;
+    }
 
     char *response=calloc(1,65536);
     if(!response){sqlite3_finalize(statement);sqlite3_close(db);send_error(fd,500,"allocation failed");return;}
     size_t used=0; int row=0;
-    int n=snprintf(response,65536,"{\"schemaVersion\":1,\"records\":[");
+    char escaped_source[2048]={0};json_escape(source_detail,escaped_source,sizeof(escaped_source));
+    int n=snprintf(response,65536,"{\"schemaVersion\":1,\"source\":\"%s\",\"records\":[",escaped_source);
     if(n<0){free(response);sqlite3_finalize(statement);sqlite3_close(db);send_error(fd,500,"encoding failed");return;}
     used=(size_t)n;
     while((rc=sqlite3_step(statement))==SQLITE_ROW){
@@ -2186,6 +2277,7 @@ static void handle(int fd) {
 }
 
 int main(void) {
+    setenv("PATH","/var/jb/bin:/var/jb/usr/bin:/var/jb/sbin:/var/jb/usr/sbin:/usr/bin:/bin:/usr/sbin:/sbin",1);
     ensure_action_dirs();
     automation_recover_incomplete_jobs();
     int s = socket(AF_INET, SOCK_STREAM, 0); if (s < 0) return 2;

@@ -121,6 +121,8 @@ def main() -> int:
             "ROOTTOOLS_LEDGER_PATH": str(ledger_path),
             "ROOTTOOLS_AGENT_TOKEN_PATH": str(runtime_agent_token_path),
             "ROOTTOOLS_TCC_DB": str(tcc_path),
+            "ROOTTOOLS_TCC_FORCE_SNAPSHOT": "1",
+            "ROOTTOOLS_TCC_SNAPSHOT_DIR": str(temp_path / "tcc-snapshot"),
             "ROOTTOOLS_MOBILE_SCOPE_ROOT": str(mobile_scope),
             "ROOTTOOLS_BOOTSTRAP_SCOPE_ROOT": str(bootstrap_scope),
             "ROOTTOOLS_PACKAGE_ROOT": str(package_root),
@@ -467,6 +469,7 @@ def main() -> int:
 
             status, tcc_payload = request(port, args.agent_token, "GET", "/v1/permissions/tcc")
             assert status == 200
+            assert tcc_payload["source"].startswith("snapshot:")
             assert tcc_payload["count"] == 1
             assert tcc_payload["records"][0]["service"] == "kTCCServiceCamera"
             assert tcc_payload["records"][0]["client"] == "com.example.fixture"

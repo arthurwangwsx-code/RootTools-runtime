@@ -304,6 +304,7 @@ static int run_update(const char *request_id) {
 }
 
 int main(int argc, char **argv) {
+    setenv("PATH","/var/jb/bin:/var/jb/usr/bin:/var/jb/sbin:/var/jb/usr/sbin:/usr/bin:/bin:/usr/sbin:/sbin",1);
     char request_id[128]={0};
     if(argc==3&&!strcmp(argv[1],"--request")){
         if(!safe_id(argv[2]))return 64;snprintf(request_id,sizeof(request_id),"%s",argv[2]);
