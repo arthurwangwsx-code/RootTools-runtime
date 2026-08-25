@@ -31,10 +31,11 @@
 #include "control_plane.h"
 #include "package_controller.h"
 #include "provider_registry.h"
+#include "runtime_observer.h"
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.8.0"
+#define VERSION "0.9.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1411,6 +1412,18 @@ static void send_runtime_catalog(int fd) {
     send_response(fd,200,"application/json",response);
 }
 
+static void send_frida_status(int fd) {
+    char *response=rt_frida_status_json();
+    if(!response){send_error(fd,503,"Frida runtime observation unavailable");return;}
+    send_response(fd,200,"application/json",response);free(response);
+}
+
+static void send_ellekit_status(int fd) {
+    char *response=rt_ellekit_status_json();
+    if(!response){send_error(fd,503,"ElleKit runtime observation unavailable");return;}
+    send_response(fd,200,"application/json",response);free(response);
+}
+
 static void send_provider_catalog(int fd) {
     char *response=rt_providers_json();
     if(!response){send_error(fd,500,"provider catalog unavailable");return;}
@@ -1528,7 +1541,7 @@ static void send_hello(int fd, RTAuthRole role) {
         "\"authenticatedRole\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
         "\"features\":{\"typedActions\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
-        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
+        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
@@ -2133,6 +2146,8 @@ static void handle(int fd) {
     }
     if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime")) { if(authorize_read_capability(fd,"device.runtime.observe")) send_text_payload(fd, runtime_text()); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/catalog")) { if(authorize_read_capability(fd,"device.runtime.adapters")) send_runtime_catalog(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/frida")) { if(authorize_read_capability(fd,"device.runtime.frida.observe")) send_frida_status(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/ellekit")) { if(authorize_read_capability(fd,"device.runtime.ellekit.observe")) send_ellekit_status(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/providers/catalog")) { if(authorize_read_capability(fd,"device.providers.read")) send_provider_catalog(fd); }
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan")) send_package_plan(fd,body); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/catalog")) { if(authorize_read_capability(fd,"device.package.list")) send_package_catalog(fd); }

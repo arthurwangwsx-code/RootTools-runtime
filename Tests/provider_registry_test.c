@@ -15,6 +15,8 @@ int main(void) {
     assert(!strcmp(rt_provider_for_capability("device.package.uninstall-deb"), "bootstrap.procursus"));
     assert(!strcmp(rt_provider_for_capability("device.package.rollback-ipa"), "package.trollstore"));
     assert(!strcmp(rt_provider_for_capability("device.self-update.schedule"), "roottools.updater"));
+    assert(!strcmp(rt_provider_for_capability("device.runtime.frida.observe"), "runtime.frida"));
+    assert(!strcmp(rt_provider_for_capability("device.runtime.ellekit.observe"), "runtime.ellekit"));
 
     char *catalog = rt_providers_json();
     assert(catalog != NULL);

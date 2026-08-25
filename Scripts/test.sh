@@ -28,6 +28,10 @@ clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   Tests/update_controller_test.c Daemon/provider_registry.c Daemon/package_controller.c Daemon/update_controller.c \
   -lsqlite3 -framework CoreFoundation -lz -o build/tests/update_controller_test
 build/tests/update_controller_test
+clang -std=c11 -Wall -Wextra -Werror -I Daemon \
+  Tests/runtime_observer_test.c Daemon/provider_registry.c Daemon/runtime_observer.c \
+  -o build/tests/runtime_observer_test
+build/tests/runtime_observer_test
 build/tests/control_plane_test --catalog | python3 -c '
 import json, sys
 catalog=json.load(sys.stdin)
@@ -45,7 +49,7 @@ sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     Daemon/roottools_updater.c > build/tests/roottools_updater_mac.c
 clang -std=c11 -Wall -Wextra -Werror -I Daemon \
-  build/tests/roottools_execd_mac.c Daemon/control_plane.c Daemon/provider_registry.c Daemon/package_controller.c Daemon/update_controller.c \
+  build/tests/roottools_execd_mac.c Daemon/control_plane.c Daemon/provider_registry.c Daemon/package_controller.c Daemon/update_controller.c Daemon/runtime_observer.c \
   -lsqlite3 -lz -framework CoreFoundation -o build/tests/roottools-execd-mac
 python3 Tests/http_contract_test.py \
   --daemon build/tests/roottools-execd-mac \

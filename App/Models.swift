@@ -152,6 +152,61 @@ struct ProviderCatalog: Codable, Equatable {
     var bindings: [ProviderBinding]
 }
 
+struct RuntimePackageFact: Codable, Equatable {
+    var known: Bool
+    var id: String?
+    var version: String?
+}
+
+struct FridaProcessFact: Codable, Equatable {
+    var running: Bool
+    var pid: Int
+    var uid: Int
+    var command: String
+}
+
+struct FridaRuntimePolicy: Codable, Equatable {
+    var headlessObservation: Bool
+    var scriptExecutionExposed: Bool
+    var arbitraryAttachExposed: Bool
+}
+
+struct FridaRuntimeStatus: Codable, Equatable {
+    var schemaVersion: Int
+    var providerId: String
+    var state: String
+    var port: Int
+    var protocolReachable: Bool
+    var serverPath: String?
+    var process: FridaProcessFact
+    var package: RuntimePackageFact
+    var policy: FridaRuntimePolicy
+}
+
+struct ElleKitComponents: Codable, Equatable {
+    var library: Bool
+    var loader: Bool
+    var injector: Bool
+    var pspawn: Bool
+    var safeMode: Bool
+    var tweakInjectDirectory: Bool
+}
+
+struct ElleKitRuntimePolicy: Codable, Equatable {
+    var headlessObservation: Bool
+    var rawHookAPIExposed: Bool
+    var arbitraryInjectionExposed: Bool
+}
+
+struct ElleKitRuntimeStatus: Codable, Equatable {
+    var schemaVersion: Int
+    var providerId: String
+    var state: String
+    var components: ElleKitComponents
+    var package: RuntimePackageFact
+    var policy: ElleKitRuntimePolicy
+}
+
 struct PackageProviderPolicy: Codable, Equatable {
     var rawShell: Bool
     var arbitraryExecutable: Bool

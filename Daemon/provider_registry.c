@@ -36,6 +36,8 @@ static const RTProviderBinding kBindings[] = {
     {"device.status.observe", "roottools.execd"},
     {"device.runtime.observe", "jailbreak.dopamine"},
     {"device.runtime.adapters", "roottools.execd"},
+    {"device.runtime.frida.observe", "runtime.frida"},
+    {"device.runtime.ellekit.observe", "runtime.ellekit"},
     {"device.providers.read", "roottools.execd"},
     {"device.package.plan", "roottools.execd"},
     {"device.package.list", "roottools.execd"},

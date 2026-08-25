@@ -151,6 +151,7 @@ def main() -> int:
             assert hello["features"]["packageController"] is True
             assert hello["features"]["packageLifecycle"] is True
             assert hello["features"]["selfUpdater"] is True
+            assert hello["features"]["runtimeSemanticObservation"] is True
             assert hello["features"]["packageChunkBytes"] == 262144
             assert hello["revisionAvailable"] is True
             initial_revision = hello["revision"]
@@ -171,6 +172,18 @@ def main() -> int:
             assert status == 200
             assert runtime_catalog["schemaVersion"] == 1
             assert any(item["id"] == "roottools.execd" for item in runtime_catalog["adapters"])
+
+            status, frida_status = request(port, args.agent_token, "GET", "/v1/runtime/frida")
+            assert status == 200
+            assert frida_status["providerId"] == "runtime.frida"
+            assert frida_status["policy"]["scriptExecutionExposed"] is False
+            assert frida_status["policy"]["arbitraryAttachExposed"] is False
+
+            status, ellekit_status = request(port, args.agent_token, "GET", "/v1/runtime/ellekit")
+            assert status == 200
+            assert ellekit_status["providerId"] == "runtime.ellekit"
+            assert ellekit_status["policy"]["rawHookAPIExposed"] is False
+            assert ellekit_status["policy"]["arbitraryInjectionExposed"] is False
 
             status, provider_catalog = request(port, args.agent_token, "GET", "/v1/providers/catalog")
             assert status == 200

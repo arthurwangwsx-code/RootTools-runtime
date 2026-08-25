@@ -133,6 +133,12 @@ class DeviceServiceClient:
     def runtime_catalog(self) -> dict:
         return self.request("GET", "/v1/runtime/catalog")
 
+    def frida_status(self) -> dict:
+        return self.request("GET", "/v1/runtime/frida")
+
+    def ellekit_status(self) -> dict:
+        return self.request("GET", "/v1/runtime/ellekit")
+
     def lock_state(self) -> dict:
         return self.request("GET", "/v1/device/lock-state")
 
@@ -366,6 +372,8 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("network")
     sub.add_parser("diagnostics")
     sub.add_parser("runtime-catalog")
+    sub.add_parser("frida-status")
+    sub.add_parser("ellekit-status")
     sub.add_parser("lock-state")
     sub.add_parser("automation-state")
     sub.add_parser("automation-queue")
@@ -452,6 +460,10 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.schedule_self_update(args.package_id, args.confirm)
     if args.command == "runtime-catalog":
         return client.runtime_catalog()
+    if args.command == "frida-status":
+        return client.frida_status()
+    if args.command == "ellekit-status":
+        return client.ellekit_status()
     if args.command == "lock-state":
         return client.lock_state()
     if args.command == "automation-state":

@@ -15,6 +15,8 @@ static const RTCapability kCapabilities[] = {
     {"device.status.observe",      NULL,                "Device and daemon health",              RT_RISK_R0, 0, 1, 1},
     {"device.runtime.observe",     NULL,                "Jailbreak runtime state",               RT_RISK_R0, 0, 1, 1},
     {"device.runtime.adapters",    NULL,                "Structured runtime adapter state",      RT_RISK_R0, 0, 1, 1},
+    {"device.runtime.frida.observe",NULL,               "Frida server and package facts",         RT_RISK_R0, 0, 1, 1},
+    {"device.runtime.ellekit.observe",NULL,             "ElleKit component and package facts",    RT_RISK_R0, 0, 1, 1},
     {"device.providers.read",      NULL,                "Provider registry and capability bindings", RT_RISK_R0, 0, 1, 1},
     {"device.package.plan",        NULL,                "Resolve package format to a provider",  RT_RISK_R0, 0, 1, 1},
     {"device.package.list",        NULL,                "List RootTools staged packages",        RT_RISK_R0, 0, 1, 1},

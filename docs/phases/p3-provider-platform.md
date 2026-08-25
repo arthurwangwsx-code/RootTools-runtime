@@ -63,6 +63,14 @@ Make jailbreak/runtime mechanisms replaceable implementation providers behind st
 - authenticated version-specific daemon health determines success or rollback;
 - a RunAtLoad, non-KeepAlive updater job can claim a queued request after bootstrap restart.
 
+### v0.9 Semantic runtime observation
+
+- `device.runtime.frida.observe` reports fixed Frida server/process/port/package facts without accepting a script or attach target;
+- `device.runtime.ellekit.observe` reports fixed rootless ElleKit component/package facts without exposing hook/injection APIs;
+- runtime observation is R0/headless and provider-bound;
+- Mac `frida-status` / `ellekit-status` and the Providers UI consume the same structured endpoints;
+- policy responses explicitly state that arbitrary Frida script/attach and ElleKit hook/injection surfaces are not exposed.
+
 ### iOS UI
 
 - Providers screen grouped by provider domain;
@@ -83,10 +91,11 @@ Make jailbreak/runtime mechanisms replaceable implementation providers behind st
 The Provider Plane foundation is complete, but P3 as a whole remains in progress. Next increments are deliberately ordered:
 
 1. Extract the remaining monolithic app/process/filesystem executors into provider-specific implementation files without changing capability contracts.
-2. Add Frida/ElleKit semantic runtime operations, never general scripts.
-3. Add provider compatibility/version metadata and fallback selection for alternate jailbreaks.
+2. Add provider compatibility/version metadata and fallback selection for alternate jailbreaks.
+3. Extract the remaining monolithic app/process/filesystem executors into provider-specific implementation files without changing capability contracts.
 4. Harden interrupted self-update recovery for power loss in the middle of a multi-file switch.
-5. Physical-device qualification of Provider Plane + Package Controller + Self-Updater once v0.8 deployment is available.
+5. Introduce any future Frida/ElleKit mutation only as narrow semantic operations with separate risk/post-condition design.
+6. Physical-device qualification of Provider Plane + Package Controller + Self-Updater + runtime observation once v0.9 deployment is available.
 
 ## Definition of done for full P3
 

@@ -110,6 +110,8 @@ struct ProvidersView: View {
     @EnvironmentObject private var store: DeviceStore
     @State private var debPlan: PackageProviderPlan?
     @State private var ipaPlan: PackageProviderPlan?
+    @State private var fridaStatus: FridaRuntimeStatus?
+    @State private var elleKitStatus: ElleKitRuntimeStatus?
     @State private var errorMessage: String?
 
     private let domains = ["control", "native", "jailbreak", "package", "runtime", "transport", "ui", "permission"]
@@ -127,6 +129,48 @@ struct ProvidersView: View {
                 Text("Package providers require owner confirmation. Raw shell and arbitrary executables remain outside the protocol.")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+            }
+
+            Section("Runtime observations") {
+                if let fridaStatus {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text("Frida").font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text(fridaStatus.state.uppercased()).font(.caption2.weight(.bold))
+                                .foregroundStyle(fridaStatus.state == "available" ? Color.green : Color.orange)
+                        }
+                        Text("port \(fridaStatus.port) · process \(fridaStatus.process.running ? "pid \(fridaStatus.process.pid) uid \(fridaStatus.process.uid)" : "offline")")
+                            .font(.caption2.monospaced()).foregroundStyle(.secondary)
+                        if let version = fridaStatus.package.version {
+                            Text("\(fridaStatus.package.id ?? "frida") · \(version)").font(.caption2).foregroundStyle(.tertiary)
+                        }
+                        Text("Script execution: blocked · arbitrary attach: blocked")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                if let elleKitStatus {
+                    VStack(alignment: .leading, spacing: 5) {
+                        HStack {
+                            Text("ElleKit").font(.subheadline.weight(.semibold))
+                            Spacer()
+                            Text(elleKitStatus.state.uppercased()).font(.caption2.weight(.bold))
+                                .foregroundStyle(elleKitStatus.state == "available" ? Color.green : Color.orange)
+                        }
+                        HStack(spacing: 6) {
+                            badge(elleKitStatus.components.library ? "LIB" : "NO LIB")
+                            badge(elleKitStatus.components.loader ? "LOADER" : "NO LOADER")
+                            badge(elleKitStatus.components.injector ? "INJECTOR" : "NO INJECTOR")
+                            badge(elleKitStatus.components.pspawn ? "PSPAWN" : "NO PSPAWN")
+                        }
+                        if let version = elleKitStatus.package.version {
+                            Text("\(elleKitStatus.package.id ?? "ellekit") · \(version)").font(.caption2).foregroundStyle(.tertiary)
+                        }
+                        Text("Raw hooks/injection are not exposed to callers")
+                            .font(.caption2).foregroundStyle(.secondary)
+                    }
+                }
+                if fridaStatus == nil || elleKitStatus == nil { ProgressView() }
             }
 
             ForEach(domains, id: \.self) { domain in
@@ -201,8 +245,12 @@ struct ProvidersView: View {
             store.providers = catalog.providers
             async let deb = DaemonClient.shared.packagePlan(format: "deb")
             async let ipa = DaemonClient.shared.packagePlan(format: "ipa")
+            async let frida = DaemonClient.shared.fridaRuntimeStatus()
+            async let ellekit = DaemonClient.shared.elleKitRuntimeStatus()
             debPlan = try await deb
             ipaPlan = try await ipa
+            fridaStatus = try await frida
+            elleKitStatus = try await ellekit
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription

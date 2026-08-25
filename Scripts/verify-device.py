@@ -114,7 +114,7 @@ def run_regression(
     full: bool,
 ) -> None:
     status = client.status()
-    require(status.get("daemonVersion") == "0.8.0", f"expected daemon 0.8.0, got {status}")
+    require(status.get("daemonVersion") == "0.9.0", f"expected daemon 0.9.0, got {status}")
     require(status.get("uid") == 0, f"daemon must be UID 0: {status}")
     require(status.get("jailbreakRootless") is True, f"rootless bootstrap is unavailable: {status}")
     step("daemon identity", f"v{status['daemonVersion']} uid={status['uid']}")
@@ -170,6 +170,22 @@ def run_regression(
     require(deb_plan.get("selectedProviderId") == "bootstrap.procursus", f"unexpected deb provider plan: {deb_plan}")
     require(ipa_plan.get("selectedProviderId") == "package.trollstore", f"unexpected ipa provider plan: {ipa_plan}")
     step("provider plane", f"{len(provider_by_id)} providers; deb={deb_plan['selectedProviderId']} ipa={ipa_plan['selectedProviderId']}")
+    frida_runtime = client.frida_status()
+    require(frida_runtime.get("providerId") == "runtime.frida", f"unexpected Frida runtime payload: {frida_runtime}")
+    require(frida_runtime.get("policy", {}).get("scriptExecutionExposed") is False, "Frida script execution unexpectedly exposed")
+    require(frida_runtime.get("policy", {}).get("arbitraryAttachExposed") is False, "Frida arbitrary attach unexpectedly exposed")
+    if status.get("fridaReady"):
+        require(frida_runtime.get("protocolReachable") is True, f"Frida status disagrees with device status: {frida_runtime}")
+        require(frida_runtime.get("process", {}).get("running") is True, f"Frida server process not observed: {frida_runtime}")
+    ellekit_runtime = client.ellekit_status()
+    require(ellekit_runtime.get("providerId") == "runtime.ellekit", f"unexpected ElleKit runtime payload: {ellekit_runtime}")
+    require(ellekit_runtime.get("policy", {}).get("rawHookAPIExposed") is False, "ElleKit raw hook API unexpectedly exposed")
+    require(ellekit_runtime.get("policy", {}).get("arbitraryInjectionExposed") is False, "ElleKit arbitrary injection unexpectedly exposed")
+    step(
+        "runtime observation",
+        f"frida={frida_runtime.get('state')} version={frida_runtime.get('package', {}).get('version')} "
+        f"ellekit={ellekit_runtime.get('state')} version={ellekit_runtime.get('package', {}).get('version')}",
+    )
     package_catalog = client.packages()
     require(package_catalog.get("schemaVersion") == 1, f"package catalog unavailable: {package_catalog}")
     step("package controller", f"{package_catalog.get('count', 0)} staged package records")
@@ -332,7 +348,7 @@ def run_regression(
     step("UI / daemon isolation", f"terminated UI pid={ui_pid} uid={ui_uid}")
 
     still_alive = client.status()
-    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.8.0", "daemon died with UI")
+    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.9.0", "daemon died with UI")
     step("daemon survives UI exit", "Device Service still responds")
 
     legacy = client.request(

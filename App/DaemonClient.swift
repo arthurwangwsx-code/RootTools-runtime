@@ -164,6 +164,16 @@ final class DaemonClient {
         return try decoder.decode(ProviderCatalog.self, from: data)
     }
 
+    func fridaRuntimeStatus() async throws -> FridaRuntimeStatus {
+        let data = try await request(path: "/v1/runtime/frida")
+        return try decoder.decode(FridaRuntimeStatus.self, from: data)
+    }
+
+    func elleKitRuntimeStatus() async throws -> ElleKitRuntimeStatus {
+        let data = try await request(path: "/v1/runtime/ellekit")
+        return try decoder.decode(ElleKitRuntimeStatus.self, from: data)
+    }
+
     func packagePlan(format: String) async throws -> PackageProviderPlan {
         try await post(
             path: "/v1/package/plan",
