@@ -36,7 +36,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.11.0"
+#define VERSION "0.12.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -858,11 +858,30 @@ static void send_error(int fd, int code, const char *message) {
     snprintf(body,sizeof(body),"{\"ok\":false,\"error\":\"%s\"}",escaped); send_response(fd,code,"application/json",body);
 }
 
-static int authorize_read_capability(int fd, const char *capability_id) {
+static int caller_principal_id(const char *caller, char *out, size_t cap) {
+    const char *prefix="principal:";
+    size_t prefix_len=strlen(prefix);
+    if(!caller||strncmp(caller,prefix,prefix_len))return 0;
+    const char *id=caller+prefix_len;
+    if(!id[0]||strlen(id)>=cap)return 0;
+    snprintf(out,cap,"%s",id);
+    return 1;
+}
+
+static int principal_grant_allows(const char *caller, const char *capability_id) {
+    char principal_id[RT_PRINCIPAL_ID_CAP]={0};
+    if(!caller_principal_id(caller,principal_id,sizeof(principal_id)))return 1;
+    return rt_principal_capability_allowed(principal_id,capability_id);
+}
+
+static int authorize_read_capability(int fd, const char *capability_id, const char *caller) {
     const RTCapability *capability=rt_capability_find(capability_id);
     if(!capability){send_error(fd,500,"read capability missing from registry");return 0;}
     RTPolicyDecision decision=rt_policy_evaluate(capability,0);
     if(!decision.allowed){send_error(fd,403,decision.reason?decision.reason:"read capability denied");return 0;}
+    if(!principal_grant_allows(caller,capability_id)){
+        send_error(fd,403,"capability is not granted to this command principal");return 0;
+    }
     return 1;
 }
 
@@ -1469,6 +1488,17 @@ static void send_principal_catalog(int fd) {
     free(response);
 }
 
+static void send_principal_grants(int fd, const char *body) {
+    char principal_id[RT_PRINCIPAL_ID_CAP]={0};
+    if(!json_get_string(body,"principalId",principal_id,sizeof(principal_id))){
+        send_error(fd,400,"principalId is required");return;
+    }
+    char *response=rt_principal_grants_json(principal_id);
+    if(!response){send_error(fd,404,"principal grants unavailable");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
+}
+
 static void send_self_update_status(int fd) {
     char *response=rt_updates_json();
     if(!response){send_error(fd,503,"self-update status unavailable");return;}
@@ -2031,6 +2061,52 @@ static void execute_principal_revoke(const char *body, RTActionExecution *execut
     snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"principal state is revoked":"active principal state was not changed");
 }
 
+static void execute_principal_grant(const char *body, RTActionExecution *execution) {
+    char principal_id[RT_PRINCIPAL_ID_CAP]={0},capability_id[256]={0};
+    long expires_at=0;
+    if(!json_get_string(body,"principalId",principal_id,sizeof(principal_id))||
+       !json_get_string(body,"grantedCapabilityId",capability_id,sizeof(capability_id))){
+        snprintf(execution->message,sizeof(execution->message),"principalId and grantedCapabilityId are required");return;
+    }
+    if(json_has_key(body,"expiresAt")&&!json_get_int(body,"expiresAt",&expires_at)){
+        snprintf(execution->message,sizeof(execution->message),"expiresAt must be an integer timestamp");return;
+    }
+    const RTCapability *granted=rt_capability_find(capability_id);
+    if(!granted||granted->risk>RT_RISK_R1||!granted->enabled){
+        snprintf(execution->target,sizeof(execution->target),"principal=%s capability=%s",principal_id,capability_id);
+        snprintf(execution->result,sizeof(execution->result),"denied");
+        snprintf(execution->message,sizeof(execution->message),"Only compiled R0/R1 capabilities may be granted to a principal");return;
+    }
+    char error[256]={0};
+    snprintf(execution->target,sizeof(execution->target),"principal=%s capability=%s",principal_id,capability_id);
+    execution->executed=1;
+    execution->post_checked=1;
+    int persisted=rt_principal_grant(principal_id,capability_id,(long long)expires_at,error,sizeof(error));
+    execution->post_passed=persisted&&rt_principal_capability_allowed(principal_id,capability_id);
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"granted":"failed");
+    snprintf(execution->message,sizeof(execution->message),"%s",execution->ok?"Principal capability grant persisted":(error[0]?error:"Principal grant failed"));
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"grant is active":"grant is not active");
+}
+
+static void execute_principal_ungrant(const char *body, RTActionExecution *execution) {
+    char principal_id[RT_PRINCIPAL_ID_CAP]={0},capability_id[256]={0};
+    if(!json_get_string(body,"principalId",principal_id,sizeof(principal_id))||
+       !json_get_string(body,"grantedCapabilityId",capability_id,sizeof(capability_id))){
+        snprintf(execution->message,sizeof(execution->message),"principalId and grantedCapabilityId are required");return;
+    }
+    char error[256]={0};
+    snprintf(execution->target,sizeof(execution->target),"principal=%s capability=%s",principal_id,capability_id);
+    execution->executed=1;
+    execution->post_checked=1;
+    int removed=rt_principal_ungrant(principal_id,capability_id,error,sizeof(error));
+    execution->post_passed=removed&&!rt_principal_capability_allowed(principal_id,capability_id);
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"ungranted":"failed");
+    snprintf(execution->message,sizeof(execution->message),"%s",execution->ok?"Principal capability grant removed":(error[0]?error:"Principal grant removal failed"));
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"grant is absent":"grant remains active");
+}
+
 static void execute_queue_app_launch(const char *body, const char *job_id, RTActionExecution *execution) {
     char bundle[256]={0};
     if(!json_get_string(body,"bundleID",bundle,sizeof(bundle))||!safe_bundle_id(bundle)){
@@ -2185,6 +2261,14 @@ static void route_capability(
             send_action_receipt(fd,capability,&context,stale,&stale_execution); execution_free(&stale_execution); return;
         }
     }
+    if(!principal_grant_allows(context.caller,capability->id)){
+        RTPolicyDecision ungranted={0,0,"principal_grant_required","capability is not granted to this command principal"};
+        RTActionExecution denied_execution; execution_init(&denied_execution);
+        snprintf(denied_execution.target,sizeof(denied_execution.target),"principal-grant");
+        snprintf(denied_execution.result,sizeof(denied_execution.result),"denied");
+        snprintf(denied_execution.message,sizeof(denied_execution.message),"Capability %s is not granted to this principal",capability->id);
+        send_action_receipt(fd,capability,&context,ungranted,&denied_execution); execution_free(&denied_execution); return;
+    }
     RTPolicyDecision decision=rt_policy_evaluate(capability,context.confirmed);
     RTActionExecution execution; execution_init(&execution);
 
@@ -2223,6 +2307,8 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"agent.rotate")) execute_agent_rotate(&execution);
     else if(legacy_action&&!strcmp(legacy_action,"principal.create")) execute_principal_create(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"principal.revoke")) execute_principal_revoke(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"principal.grant")) execute_principal_grant(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"principal.ungrant")) execute_principal_ungrant(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.queue-app-launch")) execute_queue_app_launch(body,context.request_id,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.stage.begin")) execute_package_stage_begin(body,&execution);
@@ -2283,6 +2369,7 @@ static void handle(int fd) {
         send_hello(fd,auth_role,caller); free(req); return;
     }
     if (!strcmp(path, "/v1/status") && !strcmp(method,"GET")) {
+        if(!authorize_read_capability(fd,"device.status.observe",caller)){free(req);return;}
         struct utsname u; uname(&u);
         char machine[64]={0}, osbuild[64]={0}; sysctl_string("hw.machine", machine, sizeof(machine)); sysctl_string("kern.osversion", osbuild, sizeof(osbuild));
         int dopamine = 0; char *proc = processes_text(&dopamine); free(proc);
@@ -2299,41 +2386,45 @@ static void handle(int fd) {
             (getuid()==0&&access("/var/jb",F_OK)==0)?"true":"false",ui_execution_ready(lock_snapshot)?"true":"false",pending_jobs<0?0:pending_jobs);
         send_response(fd, 200, "application/json", response); free(req); return;
     }
-    if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime")) { if(authorize_read_capability(fd,"device.runtime.observe")) send_text_payload(fd, runtime_text()); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/catalog")) { if(authorize_read_capability(fd,"device.runtime.adapters")) send_runtime_catalog(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/frida")) { if(authorize_read_capability(fd,"device.runtime.frida.observe")) send_frida_status(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/ellekit")) { if(authorize_read_capability(fd,"device.runtime.ellekit.observe")) send_ellekit_status(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/providers/catalog")) { if(authorize_read_capability(fd,"device.providers.read")) send_provider_catalog(fd); }
-    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan")) send_package_plan(fd,body); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/catalog")) { if(authorize_read_capability(fd,"device.package.list")) send_package_catalog(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/history")) { if(authorize_read_capability(fd,"device.package.history")) send_package_history(fd); }
+    if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime")) { if(authorize_read_capability(fd,"device.runtime.observe",caller)) send_text_payload(fd, runtime_text()); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/catalog")) { if(authorize_read_capability(fd,"device.runtime.adapters",caller)) send_runtime_catalog(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/frida")) { if(authorize_read_capability(fd,"device.runtime.frida.observe",caller)) send_frida_status(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/ellekit")) { if(authorize_read_capability(fd,"device.runtime.ellekit.observe",caller)) send_ellekit_status(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/providers/catalog")) { if(authorize_read_capability(fd,"device.providers.read",caller)) send_provider_catalog(fd); }
+    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan",caller)) send_package_plan(fd,body); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/catalog")) { if(authorize_read_capability(fd,"device.package.list",caller)) send_package_catalog(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/history")) { if(authorize_read_capability(fd,"device.package.history",caller)) send_package_history(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/principals/catalog")) {
         if(auth_role!=RT_AUTH_ADMIN)send_error(fd,403,"principal catalog is owner-only");
-        else if(authorize_read_capability(fd,"device.principal.list"))send_principal_catalog(fd);
+        else if(authorize_read_capability(fd,"device.principal.list",caller))send_principal_catalog(fd);
     }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/self-update/status")) { if(authorize_read_capability(fd,"device.self-update.status")) send_self_update_status(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe")) send_lock_state(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe")) send_automation_state(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/queue")) { if(authorize_read_capability(fd,"device.automation.queue.read")) send_automation_queue(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/ui/screen-info")) { if(authorize_read_capability(fd,"device.ui.screen-info")) send_ui_screen_info(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/apps")) { if(authorize_read_capability(fd,"device.app.list")) send_text_payload(fd, apps_text()); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/apps/catalog")) { if(authorize_read_capability(fd,"device.app.list")) send_app_catalog(fd); }
-    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/inspect/app")) { if(authorize_read_capability(fd,"device.app.inspect")) send_app_inspect(fd,body); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/processes")) { if(authorize_read_capability(fd,"device.process.list")) send_text_payload(fd, processes_text(NULL)); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/processes/catalog")) { if(authorize_read_capability(fd,"device.process.list")) send_process_catalog(fd); }
-    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/inspect/process")) { if(authorize_read_capability(fd,"device.process.inspect")) send_process_inspect(fd,body); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/permissions/tcc")) { if(authorize_read_capability(fd,"device.permission.tcc")) send_tcc_permissions(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/files")) { if(auth_role!=RT_AUTH_ADMIN)send_error(fd,403,"broad filesystem view is owner-only");else if(authorize_read_capability(fd,"device.fs.observe"))send_text_payload(fd, files_text()); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/fs/scopes")) { if(authorize_read_capability(fd,"device.fs.scopes")) send_fs_scopes(fd); }
-    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/fs/list")) { if(authorize_read_capability(fd,"device.fs.list")) send_fs_list(fd,body); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/network")) { if(authorize_read_capability(fd,"device.network.observe")) send_text_payload(fd, network_text()); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/network/catalog")) { if(authorize_read_capability(fd,"device.network.observe")) send_network_catalog(fd); }
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/diagnostics")) { if(authorize_read_capability(fd,"device.diagnostics.observe")) send_text_payload(fd, diagnostics_text()); }
+    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/principals/grants")) {
+        if(auth_role!=RT_AUTH_ADMIN)send_error(fd,403,"principal grants are owner-only");
+        else if(authorize_read_capability(fd,"device.principal.grants.read",caller))send_principal_grants(fd,body);
+    }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/self-update/status")) { if(authorize_read_capability(fd,"device.self-update.status",caller)) send_self_update_status(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe",caller)) send_lock_state(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe",caller)) send_automation_state(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/queue")) { if(authorize_read_capability(fd,"device.automation.queue.read",caller)) send_automation_queue(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/ui/screen-info")) { if(authorize_read_capability(fd,"device.ui.screen-info",caller)) send_ui_screen_info(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/apps")) { if(authorize_read_capability(fd,"device.app.list",caller)) send_text_payload(fd, apps_text()); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/apps/catalog")) { if(authorize_read_capability(fd,"device.app.list",caller)) send_app_catalog(fd); }
+    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/inspect/app")) { if(authorize_read_capability(fd,"device.app.inspect",caller)) send_app_inspect(fd,body); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/processes")) { if(authorize_read_capability(fd,"device.process.list",caller)) send_text_payload(fd, processes_text(NULL)); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/processes/catalog")) { if(authorize_read_capability(fd,"device.process.list",caller)) send_process_catalog(fd); }
+    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/inspect/process")) { if(authorize_read_capability(fd,"device.process.inspect",caller)) send_process_inspect(fd,body); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/permissions/tcc")) { if(authorize_read_capability(fd,"device.permission.tcc",caller)) send_tcc_permissions(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/files")) { if(auth_role!=RT_AUTH_ADMIN)send_error(fd,403,"broad filesystem view is owner-only");else if(authorize_read_capability(fd,"device.fs.observe",caller))send_text_payload(fd, files_text()); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/fs/scopes")) { if(authorize_read_capability(fd,"device.fs.scopes",caller)) send_fs_scopes(fd); }
+    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/fs/list")) { if(authorize_read_capability(fd,"device.fs.list",caller)) send_fs_list(fd,body); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/network")) { if(authorize_read_capability(fd,"device.network.observe",caller)) send_text_payload(fd, network_text()); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/network/catalog")) { if(authorize_read_capability(fd,"device.network.observe",caller)) send_network_catalog(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/diagnostics")) { if(authorize_read_capability(fd,"device.diagnostics.observe",caller)) send_text_payload(fd, diagnostics_text()); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/capabilities")) send_text_payload(fd, capabilities_text());
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/capabilities/catalog")) send_capability_catalog(fd);
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/capabilities/set")) handle_capability_set(fd,body,auth_role);
-    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/audit")) { if(authorize_read_capability(fd,"device.audit.read")) send_text_payload(fd, audit_text()); }
-    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/events/replay")) { if(authorize_read_capability(fd,"device.events.read")) send_event_replay(fd,body); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/audit")) { if(authorize_read_capability(fd,"device.audit.read",caller)) send_text_payload(fd, audit_text()); }
+    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/events/replay")) { if(authorize_read_capability(fd,"device.events.read",caller)) send_event_replay(fd,body); }
     else if (!strcmp(method,"POST") && !strcmp(path,"/v1/commands/submit")) route_action_request(fd,body,caller,trusted_confirmation_source);
     else if (!strcmp(method,"POST") && !strcmp(path,"/v1/action")) route_action_request(fd,body,caller,trusted_confirmation_source);
     else if (!strcmp(method,"POST") && !strcmp(path,"/v1/actions/app-launch")) route_action(fd,"app.launch",body,caller,trusted_confirmation_source);

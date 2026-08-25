@@ -105,6 +105,20 @@ private struct PrincipalRevokeBody: Codable {
     var confirmed: Bool
 }
 
+private struct PrincipalGrantBody: Codable {
+    var capabilityId: String
+    var principalId: String
+    var grantedCapabilityId: String
+    var expiresAt: Int64?
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
+private struct PrincipalGrantReadBody: Codable {
+    var principalId: String
+}
+
 private struct AutomationCancelBody: Codable {
     var capabilityId: String
     var jobID: String
@@ -218,6 +232,14 @@ final class DaemonClient {
     func principalCatalog() async throws -> TrustedPrincipalCatalog {
         let data = try await request(path: "/v1/principals/catalog")
         return try decoder.decode(TrustedPrincipalCatalog.self, from: data)
+    }
+
+    func principalGrants(principalID: String) async throws -> PrincipalGrantCatalog {
+        try await post(
+            path: "/v1/principals/grants",
+            body: PrincipalGrantReadBody(principalId: principalID),
+            response: PrincipalGrantCatalog.self
+        )
     }
 
     func stagePackage(url: URL, expectedIdentifier: String = "") async throws -> ActionReceipt {
@@ -463,6 +485,38 @@ final class DaemonClient {
             body: PrincipalRevokeBody(
                 capabilityId: "device.principal.revoke",
                 principalId: principalID,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: true
+            ),
+            response: ActionReceipt.self
+        )
+    }
+
+    func grantPrincipal(principalID: String, capabilityID: String, expiresAt: Int64? = nil) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: PrincipalGrantBody(
+                capabilityId: "device.principal.grant",
+                principalId: principalID,
+                grantedCapabilityId: capabilityID,
+                expiresAt: expiresAt,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: true
+            ),
+            response: ActionReceipt.self
+        )
+    }
+
+    func ungrantPrincipal(principalID: String, capabilityID: String) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: PrincipalGrantBody(
+                capabilityId: "device.principal.ungrant",
+                principalId: principalID,
+                grantedCapabilityId: capabilityID,
+                expiresAt: nil,
                 requestId: UUID().uuidString,
                 caller: caller,
                 confirmed: true

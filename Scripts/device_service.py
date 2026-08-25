@@ -223,6 +223,25 @@ class DeviceServiceClient:
     def revoke_principal(self, principal_id: str, confirmed: bool) -> dict:
         return self.action("device.principal.revoke", {"principalId": principal_id}, confirmed=confirmed)
 
+    def principal_grants(self, principal_id: str) -> dict:
+        return self.request("POST", "/v1/principals/grants", {"principalId": principal_id})
+
+    def grant_principal(self, principal_id: str, capability_id: str, confirmed: bool, expires_at: int | None = None) -> dict:
+        parameters: dict[str, object] = {
+            "principalId": principal_id,
+            "grantedCapabilityId": capability_id,
+        }
+        if expires_at is not None:
+            parameters["expiresAt"] = expires_at
+        return self.action("device.principal.grant", parameters, confirmed=confirmed)
+
+    def ungrant_principal(self, principal_id: str, capability_id: str, confirmed: bool) -> dict:
+        return self.action(
+            "device.principal.ungrant",
+            {"principalId": principal_id, "grantedCapabilityId": capability_id},
+            confirmed=confirmed,
+        )
+
     def stage_package(self, package_path: Path, expected_identifier: str = "") -> dict:
         package_path = package_path.resolve()
         if not package_path.is_file():
@@ -364,6 +383,17 @@ def build_parser() -> argparse.ArgumentParser:
     principal_revoke = sub.add_parser("principal-revoke", help="R2 owner action: revoke a named command principal")
     principal_revoke.add_argument("principal_id")
     principal_revoke.add_argument("--confirm", action="store_true", required=True)
+    principal_grants = sub.add_parser("principal-grants", help="Owner/admin only: list one principal's capability grants")
+    principal_grants.add_argument("principal_id")
+    principal_grant = sub.add_parser("principal-grant", help="R2 owner action: grant one R0/R1 capability")
+    principal_grant.add_argument("principal_id")
+    principal_grant.add_argument("capability_id")
+    principal_grant.add_argument("--expires-at", type=int)
+    principal_grant.add_argument("--confirm", action="store_true", required=True)
+    principal_ungrant = sub.add_parser("principal-ungrant", help="R2 owner action: remove one capability grant")
+    principal_ungrant.add_argument("principal_id")
+    principal_ungrant.add_argument("capability_id")
+    principal_ungrant.add_argument("--confirm", action="store_true", required=True)
     package_plan = sub.add_parser("package-plan")
     package_plan.add_argument("format", choices=("deb", "ipa", "tipa"))
     sub.add_parser("package-list")
@@ -467,6 +497,12 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.create_principal(args.principal_id, args.kind, args.display_name, args.confirm)
     if args.command == "principal-revoke":
         return client.revoke_principal(args.principal_id, args.confirm)
+    if args.command == "principal-grants":
+        return client.principal_grants(args.principal_id)
+    if args.command == "principal-grant":
+        return client.grant_principal(args.principal_id, args.capability_id, args.confirm, args.expires_at)
+    if args.command == "principal-ungrant":
+        return client.ungrant_principal(args.principal_id, args.capability_id, args.confirm)
     if args.command == "package-plan":
         return client.package_plan(args.format)
     if args.command == "package-list":

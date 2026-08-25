@@ -77,7 +77,8 @@ struct TrustedAgentsView: View {
             }
 
             Section("Approval model") {
-                Label("R0 / bounded R1 follow the principal's allowed capability surface", systemImage: "checkmark.shield")
+                Label("New principals start with zero capability grants", systemImage: "lock.shield")
+                Label("Only explicit R0 / R1 grants may run unattended", systemImage: "checkmark.shield")
                 Label("A principal cannot self-confirm an R2 action", systemImage: "lock.shield.fill")
                 Label("UID 0 and provider internals are never delegated directly", systemImage: "terminal.fill")
                 Text("RootTools derives caller identity from the authenticated credential. A caller-supplied name cannot spoof audit ownership.")
@@ -155,36 +156,46 @@ struct TrustedAgentsView: View {
 
     @ViewBuilder
     private func principalRow(_ principal: TrustedPrincipalDescriptor) -> some View {
-        HStack(spacing: 12) {
-            Image(systemName: symbol(for: principal.kind))
-                .frame(width: 38, height: 38)
-                .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
-            VStack(alignment: .leading, spacing: 3) {
-                HStack(spacing: 7) {
-                    Text(principal.displayName).font(.subheadline.weight(.semibold))
-                    Text(principal.kind.uppercased())
+        VStack(alignment: .leading, spacing: 8) {
+            HStack(spacing: 12) {
+                Image(systemName: symbol(for: principal.kind))
+                    .frame(width: 38, height: 38)
+                    .background(Color.accentColor.opacity(0.12), in: RoundedRectangle(cornerRadius: 11))
+                VStack(alignment: .leading, spacing: 3) {
+                    HStack(spacing: 7) {
+                        Text(principal.displayName).font(.subheadline.weight(.semibold))
+                        Text(principal.kind.uppercased())
+                            .font(.caption2.weight(.bold))
+                            .foregroundStyle(.secondary)
+                    }
+                    Text(principal.principalId)
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.secondary)
+                        .lineLimit(1)
+                    Text(activityText(principal))
+                        .font(.caption2)
+                        .foregroundStyle(.tertiary)
+                }
+                Spacer()
+                if principal.active {
+                    Menu {
+                        Button("Revoke", role: .destructive) { selectedForRevoke = principal }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                } else {
+                    Text("REVOKED")
                         .font(.caption2.weight(.bold))
                         .foregroundStyle(.secondary)
                 }
-                Text(principal.principalId)
-                    .font(.caption2.monospaced())
-                    .foregroundStyle(.secondary)
-                    .lineLimit(1)
-                Text(activityText(principal))
-                    .font(.caption2)
-                    .foregroundStyle(.tertiary)
             }
-            Spacer()
             if principal.active {
-                Menu {
-                    Button("Revoke", role: .destructive) { selectedForRevoke = principal }
+                NavigationLink {
+                    PrincipalGrantsView(principal: principal)
                 } label: {
-                    Image(systemName: "ellipsis.circle")
+                    Label("\(principal.grantCount) capability grants", systemImage: "key.horizontal.fill")
+                        .font(.caption.weight(.medium))
                 }
-            } else {
-                Text("REVOKED")
-                    .font(.caption2.weight(.bold))
-                    .foregroundStyle(.secondary)
             }
         }
         .padding(.vertical, 4)
@@ -279,6 +290,131 @@ struct TrustedAgentsView: View {
         #if canImport(UIKit)
         UIPasteboard.general.string = value
         #endif
+    }
+}
+
+private struct PrincipalGrantsView: View {
+    let principal: TrustedPrincipalDescriptor
+
+    @State private var capabilities: [DeviceCapabilityDescriptor] = []
+    @State private var grants: [PrincipalGrantDescriptor] = []
+    @State private var loading = false
+    @State private var mutatingCapabilityID: String?
+    @State private var errorMessage: String?
+
+    var body: some View {
+        List {
+            Section {
+                Text(principal.displayName).font(.headline)
+                Text(principal.principalId)
+                    .font(.caption.monospaced())
+                    .foregroundStyle(.secondary)
+                Text("Only R0 and R1 capabilities can be persistently delegated. R2 always requires a separate owner approval path.")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+
+            Section("Read access · R0") {
+                capabilityRows(risk: "R0")
+            }
+
+            Section("Operate access · R1") {
+                capabilityRows(risk: "R1")
+            }
+
+            if let errorMessage {
+                Section("Last error") {
+                    Text(errorMessage).font(.caption).foregroundStyle(.red).textSelection(.enabled)
+                }
+            }
+        }
+        .navigationTitle("Capability Grants")
+        .navigationBarTitleDisplayMode(.inline)
+        .toolbar {
+            ToolbarItem(placement: .navigationBarTrailing) {
+                Button { Task { await load() } } label: { Image(systemName: "arrow.clockwise") }
+            }
+        }
+        .overlay {
+            if loading && capabilities.isEmpty { ProgressView() }
+        }
+        .task { await load() }
+    }
+
+    @ViewBuilder
+    private func capabilityRows(risk: String) -> some View {
+        let rows = capabilities.filter { $0.risk == risk && ($0.hardEnabled ?? $0.enabled) }
+        if rows.isEmpty {
+            Text("No grantable capabilities")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        } else {
+            ForEach(rows) { capability in
+                Button {
+                    Task { await toggle(capability) }
+                } label: {
+                    HStack(spacing: 12) {
+                        Image(systemName: isGranted(capability.id) ? "checkmark.circle.fill" : "circle")
+                            .foregroundStyle(isGranted(capability.id) ? Color.green : Color.secondary)
+                        VStack(alignment: .leading, spacing: 3) {
+                            Text(capability.title).foregroundStyle(.primary)
+                            Text(capability.id)
+                                .font(.caption2.monospaced())
+                                .foregroundStyle(.secondary)
+                        }
+                        Spacer()
+                        if mutatingCapabilityID == capability.id { ProgressView() }
+                    }
+                }
+                .buttonStyle(.plain)
+                .disabled(mutatingCapabilityID != nil)
+            }
+        }
+    }
+
+    private func isGranted(_ capabilityID: String) -> Bool {
+        grants.contains { $0.capabilityId == capabilityID && $0.active }
+    }
+
+    @MainActor
+    private func load() async {
+        guard !loading else { return }
+        loading = true
+        defer { loading = false }
+        do {
+            async let catalog = DaemonClient.shared.capabilityCatalog()
+            async let grantCatalog = DaemonClient.shared.principalGrants(principalID: principal.principalId)
+            let resolvedCatalog = try await catalog
+            let resolvedGrants = try await grantCatalog
+            capabilities = resolvedCatalog.capabilities
+            grants = resolvedGrants.grants
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func toggle(_ capability: DeviceCapabilityDescriptor) async {
+        guard mutatingCapabilityID == nil else { return }
+        mutatingCapabilityID = capability.id
+        defer { mutatingCapabilityID = nil }
+        do {
+            let receipt: ActionReceipt
+            if isGranted(capability.id) {
+                receipt = try await DaemonClient.shared.ungrantPrincipal(principalID: principal.principalId, capabilityID: capability.id)
+            } else {
+                receipt = try await DaemonClient.shared.grantPrincipal(principalID: principal.principalId, capabilityID: capability.id)
+            }
+            guard receipt.ok else {
+                errorMessage = receipt.message
+                return
+            }
+            grants = try await DaemonClient.shared.principalGrants(principalID: principal.principalId).grants
+            errorMessage = nil
+        } catch {
+            errorMessage = error.localizedDescription
+        }
     }
 }
 

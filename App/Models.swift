@@ -290,6 +290,7 @@ struct TrustedPrincipalDescriptor: Codable, Identifiable, Equatable {
     var createdAt: Int64
     var lastUsedAt: Int64?
     var revokedAt: Int64?
+    var grantCount: Int
 
     var id: String { principalId }
     var active: Bool { state == "active" }
@@ -298,6 +299,22 @@ struct TrustedPrincipalDescriptor: Codable, Identifiable, Equatable {
 struct TrustedPrincipalCatalog: Codable, Equatable {
     var schemaVersion: Int
     var principals: [TrustedPrincipalDescriptor]
+    var count: Int
+}
+
+struct PrincipalGrantDescriptor: Codable, Identifiable, Equatable {
+    var capabilityId: String
+    var createdAt: Int64
+    var expiresAt: Int64?
+    var active: Bool
+
+    var id: String { capabilityId }
+}
+
+struct PrincipalGrantCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var principalId: String
+    var grants: [PrincipalGrantDescriptor]
     var count: Int
 }
 

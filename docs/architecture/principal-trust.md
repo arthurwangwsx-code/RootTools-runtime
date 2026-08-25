@@ -108,3 +108,19 @@ python3 Scripts/device_service.py \
 ```
 
 The saved principal credential can then be supplied with `--token-file` for ordinary Agent-class Device Service calls. The Owner token remains reserved for administration/R2 approval.
+
+## v0.12 capability grants
+
+Identity and authority are separate. Creating a principal creates authentication only; it does not delegate device operations. Persistent authority is represented by exact capability grants stored in the principal ledger.
+
+The owner may grant only compiled R0/R1 capabilities. Every read endpoint and every Command Gateway mutation checks the authenticated principal's grant before execution. Missing grants fail closed; state-changing denials still produce normal receipts and audit records. R2 remains outside persistent grants and continues to require a distinct trusted owner approval path.
+
+Each grant may optionally carry an expiry timestamp. This makes temporary Network Skill or automation access time-bounded without rotating the principal credential.
+
+Host administration adds:
+
+```bash
+principal-grants <principalId>
+principal-grant <principalId> <capabilityId> --confirm
+principal-ungrant <principalId> <capabilityId> --confirm
+```

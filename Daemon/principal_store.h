@@ -32,6 +32,27 @@ int rt_principal_authenticate(
     size_t kind_cap
 );
 
+int rt_principal_grant(
+    const char *principal_id,
+    const char *capability_id,
+    long long expires_at,
+    char *error_out,
+    size_t error_cap
+);
+
+int rt_principal_ungrant(
+    const char *principal_id,
+    const char *capability_id,
+    char *error_out,
+    size_t error_cap
+);
+
+int rt_principal_capability_allowed(
+    const char *principal_id,
+    const char *capability_id
+);
+
+char *rt_principal_grants_json(const char *principal_id);
 char *rt_principals_json(void);
 
 #endif

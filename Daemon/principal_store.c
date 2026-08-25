@@ -10,6 +10,8 @@
 #include <sys/stat.h>
 #include <time.h>
 
+static void json_escape(const char *input, char *out, size_t cap);
+
 static const char *principal_db_path(void) {
     const char *override = getenv("ROOTTOOLS_PRINCIPAL_DB");
     return override && override[0] ? override : "/var/mobile/Library/RootTools/principals.sqlite3";
@@ -63,7 +65,11 @@ static int db_open(sqlite3 **out) {
         "principal_id TEXT PRIMARY KEY,kind TEXT NOT NULL,display_name TEXT NOT NULL,"
         "token_hash TEXT NOT NULL UNIQUE,state TEXT NOT NULL,created_at INTEGER NOT NULL,"
         "last_used_at INTEGER,revoked_at INTEGER);"
-        "CREATE INDEX IF NOT EXISTS principals_state_idx ON principals(state,kind);";
+        "CREATE INDEX IF NOT EXISTS principals_state_idx ON principals(state,kind);"
+        "CREATE TABLE IF NOT EXISTS principal_grants("
+        "principal_id TEXT NOT NULL,capability_id TEXT NOT NULL,created_at INTEGER NOT NULL,"
+        "expires_at INTEGER,PRIMARY KEY(principal_id,capability_id));"
+        "CREATE INDEX IF NOT EXISTS principal_grants_principal_idx ON principal_grants(principal_id,expires_at);";
     char *error = NULL;
     rc = sqlite3_exec(db, schema, NULL, NULL, &error);
     sqlite3_free(error);
@@ -178,6 +184,174 @@ int rt_principal_revoke(const char *principal_id, char *error_out, size_t error_
     return 1;
 }
 
+static int principal_active(sqlite3 *db, const char *principal_id) {
+    sqlite3_stmt *statement = NULL;
+    int rc = sqlite3_prepare_v2(db, "SELECT 1 FROM principals WHERE principal_id=?1 AND state='active' LIMIT 1", -1, &statement, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_text(statement, 1, principal_id, -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(statement);
+    }
+    int active = rc == SQLITE_ROW;
+    sqlite3_finalize(statement);
+    return active;
+}
+
+int rt_principal_grant(
+    const char *principal_id,
+    const char *capability_id,
+    long long expires_at,
+    char *error_out,
+    size_t error_cap
+) {
+    if (!safe_id(principal_id, RT_PRINCIPAL_ID_CAP - 1) || !safe_id(capability_id, 180)) {
+        set_error(error_out, error_cap, "invalid principal or capability id");
+        return 0;
+    }
+    if (expires_at < 0 || (expires_at > 0 && expires_at <= (long long)time(NULL))) {
+        set_error(error_out, error_cap, "grant expiry must be in the future");
+        return 0;
+    }
+    sqlite3 *db = NULL;
+    if (!db_open(&db)) {
+        set_error(error_out, error_cap, "principal store unavailable");
+        return 0;
+    }
+    if (!principal_active(db, principal_id)) {
+        sqlite3_close(db);
+        set_error(error_out, error_cap, "active principal not found");
+        return 0;
+    }
+    sqlite3_stmt *statement = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "INSERT INTO principal_grants(principal_id,capability_id,created_at,expires_at) VALUES(?1,?2,?3,?4) "
+        "ON CONFLICT(principal_id,capability_id) DO UPDATE SET created_at=excluded.created_at,expires_at=excluded.expires_at",
+        -1,
+        &statement,
+        NULL
+    );
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_text(statement, 1, principal_id, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement, 2, capability_id, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(statement, 3, time(NULL));
+        if (expires_at > 0) sqlite3_bind_int64(statement, 4, expires_at);
+        else sqlite3_bind_null(statement, 4);
+        rc = sqlite3_step(statement);
+    }
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+    if (rc != SQLITE_DONE) {
+        set_error(error_out, error_cap, "principal grant could not be persisted");
+        return 0;
+    }
+    return 1;
+}
+
+int rt_principal_ungrant(
+    const char *principal_id,
+    const char *capability_id,
+    char *error_out,
+    size_t error_cap
+) {
+    if (!safe_id(principal_id, RT_PRINCIPAL_ID_CAP - 1) || !safe_id(capability_id, 180)) {
+        set_error(error_out, error_cap, "invalid principal or capability id");
+        return 0;
+    }
+    sqlite3 *db = NULL;
+    if (!db_open(&db)) {
+        set_error(error_out, error_cap, "principal store unavailable");
+        return 0;
+    }
+    sqlite3_stmt *statement = NULL;
+    int rc = sqlite3_prepare_v2(db, "DELETE FROM principal_grants WHERE principal_id=?1 AND capability_id=?2", -1, &statement, NULL);
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_text(statement, 1, principal_id, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement, 2, capability_id, -1, SQLITE_TRANSIENT);
+        rc = sqlite3_step(statement);
+    }
+    int changed = sqlite3_changes(db);
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+    if (rc != SQLITE_DONE || changed != 1) {
+        set_error(error_out, error_cap, "principal grant not found");
+        return 0;
+    }
+    return 1;
+}
+
+int rt_principal_capability_allowed(const char *principal_id, const char *capability_id) {
+    if (!safe_id(principal_id, RT_PRINCIPAL_ID_CAP - 1) || !safe_id(capability_id, 180)) return 0;
+    sqlite3 *db = NULL;
+    if (!db_open(&db)) return 0;
+    sqlite3_stmt *statement = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT 1 FROM principals p JOIN principal_grants g ON g.principal_id=p.principal_id "
+        "WHERE p.principal_id=?1 AND p.state='active' AND g.capability_id=?2 "
+        "AND (g.expires_at IS NULL OR g.expires_at>?3) LIMIT 1",
+        -1,
+        &statement,
+        NULL
+    );
+    if (rc == SQLITE_OK) {
+        sqlite3_bind_text(statement, 1, principal_id, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement, 2, capability_id, -1, SQLITE_TRANSIENT);
+        sqlite3_bind_int64(statement, 3, time(NULL));
+        rc = sqlite3_step(statement);
+    }
+    int allowed = rc == SQLITE_ROW;
+    sqlite3_finalize(statement);
+    sqlite3_close(db);
+    return allowed;
+}
+
+char *rt_principal_grants_json(const char *principal_id) {
+    if (!safe_id(principal_id, RT_PRINCIPAL_ID_CAP - 1)) return NULL;
+    sqlite3 *db = NULL;
+    if (!db_open(&db)) return NULL;
+    sqlite3_stmt *statement = NULL;
+    int rc = sqlite3_prepare_v2(
+        db,
+        "SELECT capability_id,created_at,expires_at FROM principal_grants WHERE principal_id=?1 ORDER BY capability_id",
+        -1,
+        &statement,
+        NULL
+    );
+    if (rc == SQLITE_OK) sqlite3_bind_text(statement, 1, principal_id, -1, SQLITE_TRANSIENT);
+    if (rc != SQLITE_OK) {
+        sqlite3_finalize(statement); sqlite3_close(db); return NULL;
+    }
+    char *out = calloc(1, 32768);
+    if (!out) {
+        sqlite3_finalize(statement); sqlite3_close(db); return NULL;
+    }
+    char eid[256] = {0}; json_escape(principal_id, eid, sizeof(eid));
+    size_t used = 0; int count = 0;
+    int n = snprintf(out, 32768, "{\"schemaVersion\":1,\"principalId\":\"%s\",\"grants\":[", eid);
+    if (n < 0) { free(out); sqlite3_finalize(statement); sqlite3_close(db); return NULL; }
+    used = (size_t)n;
+    while ((rc = sqlite3_step(statement)) == SQLITE_ROW) {
+        const char *capability_id = (const char *)sqlite3_column_text(statement, 0);
+        sqlite3_int64 created_at = sqlite3_column_int64(statement, 1);
+        int expiry_null = sqlite3_column_type(statement, 2) == SQLITE_NULL;
+        sqlite3_int64 expires_at = sqlite3_column_int64(statement, 2);
+        char ecap[384] = {0}, expiry[64] = {0};
+        json_escape(capability_id ? capability_id : "", ecap, sizeof(ecap));
+        if (expiry_null) snprintf(expiry, sizeof(expiry), "null");
+        else snprintf(expiry, sizeof(expiry), "%lld", (long long)expires_at);
+        n = snprintf(out + used, 32768 - used,
+            "%s{\"capabilityId\":\"%s\",\"createdAt\":%lld,\"expiresAt\":%s,\"active\":%s}",
+            count ? "," : "", ecap, (long long)created_at, expiry,
+            (expiry_null || expires_at > (sqlite3_int64)time(NULL)) ? "true" : "false");
+        if (n < 0 || (size_t)n >= 32768 - used) break;
+        used += (size_t)n; count++;
+    }
+    sqlite3_finalize(statement); sqlite3_close(db);
+    n = snprintf(out + used, 32768 - used, "],\"count\":%d}", count);
+    if (n < 0 || (size_t)n >= 32768 - used) { free(out); return NULL; }
+    return out;
+}
+
 int rt_principal_authenticate(
     const char *token,
     char *principal_id_out,
@@ -257,12 +431,14 @@ char *rt_principals_json(void) {
     sqlite3_stmt *statement = NULL;
     int rc = sqlite3_prepare_v2(
         db,
-        "SELECT principal_id,kind,display_name,state,created_at,last_used_at,revoked_at "
-        "FROM principals ORDER BY created_at DESC,principal_id",
+        "SELECT p.principal_id,p.kind,p.display_name,p.state,p.created_at,p.last_used_at,p.revoked_at,"
+        "(SELECT COUNT(*) FROM principal_grants g WHERE g.principal_id=p.principal_id AND (g.expires_at IS NULL OR g.expires_at>?1)) "
+        "FROM principals p ORDER BY p.created_at DESC,p.principal_id",
         -1,
         &statement,
         NULL
     );
+    if (rc == SQLITE_OK) sqlite3_bind_int64(statement, 1, time(NULL));
     if (rc != SQLITE_OK) {
         sqlite3_close(db);
         return NULL;
@@ -290,6 +466,7 @@ char *rt_principals_json(void) {
         sqlite3_int64 last_used_at = sqlite3_column_int64(statement, 5);
         int revoked_null = sqlite3_column_type(statement, 6) == SQLITE_NULL;
         sqlite3_int64 revoked_at = sqlite3_column_int64(statement, 6);
+        int grant_count = sqlite3_column_int(statement, 7);
         char eid[256] = {0}, ekind[128] = {0}, ename[512] = {0}, estate[64] = {0};
         json_escape(principal_id ? principal_id : "", eid, sizeof(eid));
         json_escape(kind ? kind : "", ekind, sizeof(ekind));
@@ -304,12 +481,13 @@ char *rt_principals_json(void) {
             out + used,
             32768 - used,
             "%s{\"principalId\":\"%s\",\"kind\":\"%s\",\"displayName\":\"%s\",\"state\":\"%s\","
-            "\"createdAt\":%lld,\"lastUsedAt\":%s,\"revokedAt\":%s}",
+            "\"createdAt\":%lld,\"lastUsedAt\":%s,\"revokedAt\":%s,\"grantCount\":%d}",
             count ? "," : "",
             eid, ekind, ename, estate,
             (long long)created_at,
             last_used_text,
-            revoked_text
+            revoked_text,
+            grant_count
         );
         if (n < 0 || (size_t)n >= 32768 - used) break;
         used += (size_t)n;

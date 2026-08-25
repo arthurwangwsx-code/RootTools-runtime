@@ -214,6 +214,70 @@ def main() -> int:
             assert status == 200
             assert principal_hello["authenticatedRole"] == "agent"
             assert principal_hello["authenticatedCaller"] == "principal:host:test-mac"
+            denied_write = action(
+                port,
+                principal_token,
+                "device.fs.write",
+                parameters={"scope": "mobile", "name": "principal-proof.txt", "content": "named principal"},
+            )
+            assert denied_write["ok"] is False
+            assert denied_write["result"] == "denied"
+            assert denied_write["policy"] == "principal_grant_required"
+
+            status, denied_status = request(port, principal_token, "GET", "/v1/status")
+            assert status == 403
+            assert denied_status["error"] == "capability is not granted to this command principal"
+
+            owner_grant_status = action(
+                port,
+                args.admin_token,
+                "device.principal.grant",
+                confirmed=True,
+                parameters={
+                    "principalId": "host:test-mac",
+                    "grantedCapabilityId": "device.status.observe",
+                },
+            )
+            assert owner_grant_status["ok"] is True
+            owner_grant_write = action(
+                port,
+                args.admin_token,
+                "device.principal.grant",
+                confirmed=True,
+                parameters={
+                    "principalId": "host:test-mac",
+                    "grantedCapabilityId": "device.fs.write",
+                },
+            )
+            assert owner_grant_write["ok"] is True
+
+            denied_r2_grant = action(
+                port,
+                args.admin_token,
+                "device.principal.grant",
+                confirmed=True,
+                parameters={
+                    "principalId": "host:test-mac",
+                    "grantedCapabilityId": "device.process.terminate",
+                },
+            )
+            assert denied_r2_grant["ok"] is False
+
+            status, grants = request(
+                port,
+                args.admin_token,
+                "POST",
+                "/v1/principals/grants",
+                {"principalId": "host:test-mac"},
+            )
+            assert status == 200
+            grant_ids = {item["capabilityId"] for item in grants["grants"] if item["active"]}
+            assert grant_ids == {"device.status.observe", "device.fs.write"}
+
+            status, principal_status = request(port, principal_token, "GET", "/v1/status")
+            assert status == 200
+            assert principal_status["daemonVersion"]
+
             principal_write = action(
                 port,
                 principal_token,
@@ -222,6 +286,25 @@ def main() -> int:
             )
             assert principal_write["ok"] is True
             assert principal_write["caller"] == "principal:host:test-mac"
+
+            owner_ungrant_write = action(
+                port,
+                args.admin_token,
+                "device.principal.ungrant",
+                confirmed=True,
+                parameters={
+                    "principalId": "host:test-mac",
+                    "grantedCapabilityId": "device.fs.write",
+                },
+            )
+            assert owner_ungrant_write["ok"] is True
+            denied_again = action(
+                port,
+                principal_token,
+                "device.fs.write",
+                parameters={"scope": "mobile", "name": "principal-proof-2.txt", "content": "should not write"},
+            )
+            assert denied_again["policy"] == "principal_grant_required"
 
             owner_revoke = action(
                 port,

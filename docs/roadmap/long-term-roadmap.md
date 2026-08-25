@@ -68,6 +68,8 @@ Lock-aware foundation started in v0.4: typed lock/display observation, headless-
 
 Expose stable verbs such as `device_info`, `device_app_launch`, `device_process_inspect`, `device_fs_read`, and `device_runtime_inspect`. The Agent never receives RootTools internals or arbitrary shell access.
 
+v0.10 establishes the canonical Command Gateway, v0.11 adds named command principals, and v0.12 separates identity from authority with exact R0/R1 capability grants and optional expiry. One-shot R2 approval remains a later explicit approval primitive rather than a persistent grant.
+
 ### P6 — Automation Runtime
 
 Make the phone a durable execution node with Trigger, Workflow, Step, Run, Retry/Timeout, Result, Rollback, and battery/resource policy.
