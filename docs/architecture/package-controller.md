@@ -153,13 +153,15 @@ The Packages screen uses the system file importer. It:
 
 Installing a DEB that replaces `roottools-execd` may terminate the process that is currently producing the install receipt. Therefore RootTools self-update is intentionally not considered complete merely because generic DEB install exists.
 
-A later self-update helper must be a small independent launchd process that:
+v0.8 implements this boundary with the independent `roottools-updater` described in `docs/architecture/self-updater.md`. The serving daemon now:
 
-1. validates an already-ready RootTools package;
-2. performs the replacement outside the serving daemon process;
-3. starts the new daemon;
-4. checks `/v1/hello` version/health;
-5. rolls back if health verification fails.
+1. accepts only a ready `com.arthur.roottools` DEB;
+2. persists an R2 owner-confirmed queued update and completes its normal receipt;
+3. launches the updater only after the request connection has closed;
+4. lets the updater perform a RootTools-only payload switch and authenticated version health check;
+5. restores request-scoped sibling backups if the new daemon is unhealthy.
+
+Generic install/uninstall/rollback explicitly reject RootTools itself. Full recovery from power loss during the multi-file switch remains production-hardening work rather than being hidden inside the normal package path.
 
 ## Security properties
 

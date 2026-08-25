@@ -13,6 +13,7 @@
 
 static const RTProvider kProviders[] = {
     {"roottools.execd", "RootTools privileged daemon", RT_PROVIDER_CONTROL, "roottools.uid0-daemon", 100, 1, 0, 1, RT_PROVIDER_PROBE_ALWAYS, NULL, 0},
+    {"roottools.updater", "RootTools independent updater", RT_PROVIDER_CONTROL, "roottools.one-shot-updater", 100, 1, 0, 1, RT_PROVIDER_PROBE_PATH, "/var/jb/usr/local/bin/roottools-updater", 0},
     {"ios.darwin", "Darwin native APIs", RT_PROVIDER_NATIVE, "ios.darwin", 100, 1, 0, 1, RT_PROVIDER_PROBE_ALWAYS, NULL, 0},
     {"jailbreak.dopamine", "Dopamine rootless jailbreak", RT_PROVIDER_JAILBREAK, "dopamine.rootless", 100, 1, 0, 1, RT_PROVIDER_PROBE_PATH, "/var/jb", 0},
     {"bootstrap.procursus", "Procursus rootless bootstrap", RT_PROVIDER_JAILBREAK, "procursus.rootless", 95, 1, 0, 1, RT_PROVIDER_PROBE_PATH, "/var/jb/usr/bin/dpkg", 0},
@@ -39,6 +40,7 @@ static const RTProviderBinding kBindings[] = {
     {"device.package.plan", "roottools.execd"},
     {"device.package.list", "roottools.execd"},
     {"device.package.history", "roottools.execd"},
+    {"device.self-update.status", "roottools.execd"},
     {"device.lock.observe", "ios.darwin"},
     {"device.automation.observe", "roottools.execd"},
     {"device.automation.queue.read", "roottools.execd"},
@@ -73,6 +75,7 @@ static const RTProviderBinding kBindings[] = {
     {"device.package.rollback-ipa", "package.trollstore"},
     {"device.package.uninstall-deb", "bootstrap.procursus"},
     {"device.package.uninstall-ipa", "package.trollstore"},
+    {"device.self-update.schedule", "roottools.updater"},
 };
 
 static int port_open(int port) {
@@ -196,6 +199,10 @@ int rt_provider_resolve_executable(const char *id, char *out, size_t cap) {
     }
     if(!strcmp(id,"ui.springboard")){
         snprintf(out,cap,"/var/jb/usr/bin/uiopen");
+        return access(out,X_OK)==0;
+    }
+    if(!strcmp(id,"roottools.updater")){
+        snprintf(out,cap,"/var/jb/usr/local/bin/roottools-updater");
         return access(out,X_OK)==0;
     }
     return 0;

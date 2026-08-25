@@ -156,6 +156,18 @@ int rt_package_get(const char *package_id, RTPackageInfo *info) {
     return ok;
 }
 
+int rt_package_resolve_artifact(const char *package_id, const char *required_state,
+                                RTPackageInfo *info, char *path, size_t path_cap) {
+    RTPackageInfo local;
+    if(!rt_package_get(package_id,&local))return 0;
+    if(required_state&&strcmp(local.state,required_state))return 0;
+    if(!package_path(package_id,local.format,path,path_cap))return 0;
+    struct stat st;
+    if(lstat(path,&st)!=0||!S_ISREG(st.st_mode)||S_ISLNK(st.st_mode))return 0;
+    if(info)*info=local;
+    return 1;
+}
+
 static int update_state(const char *id, const char *state, const char *result, const char *error) {
     sqlite3 *db=NULL;
     if(!db_open(&db))return 0;
@@ -507,6 +519,23 @@ static int inspect_deb_identifier(const char *path, char *out, size_t cap) {
     return 1;
 }
 
+int rt_package_deb_field(const char *package_id, const char *field, char *out, size_t cap) {
+    if(!field||!out||cap<2||(strcmp(field,"Package")&&strcmp(field,"Version")))return 0;
+    RTPackageInfo info;
+    char path[1024]={0};
+    if(!rt_package_resolve_artifact(package_id,NULL,&info,path,sizeof(path))||strcmp(info.format,"deb"))return 0;
+    const char *tool="/var/jb/usr/bin/dpkg-deb";
+    if(access(tool,X_OK)!=0)return 0;
+    char output[2048]={0};
+    char *argv[]={(char*)"dpkg-deb",(char*)"-f",path,(char*)field,NULL};
+    int rc=spawn_capture(tool,argv,output,sizeof(output));
+    if(rc!=0)return 0;
+    output[strcspn(output,"\r\n")]=0;
+    if(!output[0]||strlen(output)>=cap)return 0;
+    snprintf(out,cap,"%s",output);
+    return 1;
+}
+
 static unsigned short zip_le16(const unsigned char *p) {
     return (unsigned short)((unsigned short)p[0]|((unsigned short)p[1]<<8));
 }
@@ -716,6 +745,11 @@ static int install_deb_internal(const char *package_id, int rollback, RTPackageO
         snprintf(op->message,sizeof(op->message),rollback?"DEB rollback artifact is not retained":"DEB package is not installable");
         return 0;
     }
+    if(!strcmp(info.expected_identifier,"com.arthur.roottools")){
+        snprintf(op->result,sizeof(op->result),"self_update_required");
+        snprintf(op->message,sizeof(op->message),"RootTools packages must use the independent self-updater");
+        return 0;
+    }
     char path[1024]={0};
     if(!package_path(package_id,info.format,path,sizeof(path))||!verify_deb_identifier(path,info.expected_identifier)){
         snprintf(op->result,sizeof(op->result),"metadata_mismatch");
@@ -818,6 +852,11 @@ int rt_package_uninstall_deb(const char *package_id, RTPackageOperation *op) {
     if(!rt_package_get(package_id,&info)||strcmp(info.format,"deb")||strcmp(info.state,"installed")){
         snprintf(op->message,sizeof(op->message),"Managed DEB package is not installed");return 0;
     }
+    if(!strcmp(info.expected_identifier,"com.arthur.roottools")){
+        snprintf(op->result,sizeof(op->result),"denied");
+        snprintf(op->message,sizeof(op->message),"RootTools cannot uninstall itself through the generic package lifecycle");
+        return 0;
+    }
     char dpkg[1024]={0};
     if(!rt_provider_resolve_executable("bootstrap.procursus",dpkg,sizeof(dpkg))){
         snprintf(op->result,sizeof(op->result),"provider_unavailable");snprintf(op->message,sizeof(op->message),"Procursus dpkg provider unavailable");return 0;
@@ -856,6 +895,14 @@ int rt_package_uninstall_ipa(const char *package_id, RTPackageOperation *op) {
     if(op->ok){update_state(package_id,"uninstalled","uninstalled",NULL);record_event(&info,"uninstall","package.trollstore","uninstalled");}
     else update_result_only(package_id,NULL,"trollstore uninstall/post-condition failed");
     return op->ok;
+}
+
+int rt_package_mark_external_install(const char *package_id, const char *action,
+                                     const char *provider_id) {
+    RTPackageInfo info;
+    if(!action||!provider_id||!rt_package_get(package_id,&info))return 0;
+    if(!activate_package(&info,action))return 0;
+    return record_event(&info,action,provider_id,"success");
 }
 
 static void json_escape_small(const char *src, char *dst, size_t cap) {

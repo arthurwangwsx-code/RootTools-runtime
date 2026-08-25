@@ -52,6 +52,17 @@ Make jailbreak/runtime mechanisms replaceable implementation providers behind st
 - rollback/uninstall remain R2 owner-confirmed and keep post-condition verification;
 - generic uninstall for packages not installed through RootTools remains outside the protocol.
 
+### v0.8 Independent self-updater
+
+- `device.self-update.schedule` is an R2 owner-confirmed capability bound to `roottools.updater`;
+- the daemon persists the update request and receipt before an independent process claims it;
+- generic package install/uninstall/rollback reject `com.arthur.roottools`;
+- the updater re-reads real DEB Package/Version metadata and extracts data with fixed `dpkg-deb -x` without executing maintainer scripts;
+- the extracted tree is restricted to RootTools App/daemon/updater/launchd paths and rejects symlinks/special files;
+- candidate binaries are signed before sibling swap;
+- authenticated version-specific daemon health determines success or rollback;
+- a RunAtLoad, non-KeepAlive updater job can claim a queued request after bootstrap restart.
+
 ### iOS UI
 
 - Providers screen grouped by provider domain;
@@ -72,10 +83,10 @@ Make jailbreak/runtime mechanisms replaceable implementation providers behind st
 The Provider Plane foundation is complete, but P3 as a whole remains in progress. Next increments are deliberately ordered:
 
 1. Extract the remaining monolithic app/process/filesystem executors into provider-specific implementation files without changing capability contracts.
-2. Add a separate RootTools self-update helper that survives daemon replacement.
-3. Add Frida/ElleKit semantic runtime operations, never general scripts.
-4. Add provider compatibility/version metadata and fallback selection for alternate jailbreaks.
-5. Physical-device qualification of Provider Plane + Package Controller once v0.7 deployment is available.
+2. Add Frida/ElleKit semantic runtime operations, never general scripts.
+3. Add provider compatibility/version metadata and fallback selection for alternate jailbreaks.
+4. Harden interrupted self-update recovery for power loss in the middle of a multi-file switch.
+5. Physical-device qualification of Provider Plane + Package Controller + Self-Updater once v0.8 deployment is available.
 
 ## Definition of done for full P3
 

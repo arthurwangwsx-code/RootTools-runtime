@@ -47,6 +47,11 @@ int rt_package_rollback_ipa(const char *package_id, RTPackageOperation *operatio
 int rt_package_uninstall_deb(const char *package_id, RTPackageOperation *operation);
 int rt_package_uninstall_ipa(const char *package_id, RTPackageOperation *operation);
 int rt_package_get(const char *package_id, RTPackageInfo *info);
+int rt_package_resolve_artifact(const char *package_id, const char *required_state,
+                                RTPackageInfo *info, char *path, size_t path_cap);
+int rt_package_deb_field(const char *package_id, const char *field, char *out, size_t cap);
+int rt_package_mark_external_install(const char *package_id, const char *action,
+                                     const char *provider_id);
 char *rt_packages_json(void);
 char *rt_package_history_json(void);
 

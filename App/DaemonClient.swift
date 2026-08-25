@@ -182,6 +182,11 @@ final class DaemonClient {
         return try decoder.decode(PackageHistoryPayload.self, from: data)
     }
 
+    func selfUpdateStatus() async throws -> SelfUpdateStatusPayload {
+        let data = try await request(path: "/v1/self-update/status")
+        return try decoder.decode(SelfUpdateStatusPayload.self, from: data)
+    }
+
     func stagePackage(url: URL, expectedIdentifier: String = "") async throws -> ActionReceipt {
         let accessed = url.startAccessingSecurityScopedResource()
         defer { if accessed { url.stopAccessingSecurityScopedResource() } }
@@ -309,6 +314,23 @@ final class DaemonClient {
             ),
             response: ActionReceipt.self,
             timeout: 180
+        )
+    }
+
+    func scheduleSelfUpdate(_ package: StagedPackageDescriptor, confirmed: Bool) async throws -> ActionReceipt {
+        guard package.format == "deb", package.expectedIdentifier == "com.arthur.roottools" else {
+            throw DaemonError.actionFailed("Only a verified RootTools DEB can use self-update")
+        }
+        return try await post(
+            path: "/v1/action",
+            body: PackageIDActionBody(
+                capabilityId: "device.self-update.schedule",
+                packageId: package.packageId,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: confirmed
+            ),
+            response: ActionReceipt.self
         )
     }
 

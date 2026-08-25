@@ -55,6 +55,12 @@ int main(void) {
     assert(rt_package_commit("bad-hash",&op)==0);
     assert(!strcmp(op.result,"hash_mismatch"));
 
+    assert(rt_package_begin("self-update","roottools.deb","deb","com.arthur.roottools",(long long)length,hash,&op)==1);
+    assert(rt_package_append("self-update",0,payload,length,&op)==1);
+    assert(rt_package_commit("self-update",&op)==1);
+    assert(rt_package_install_deb("self-update",&op)==0);
+    assert(!strcmp(op.result,"self_update_required"));
+
     puts("package_controller_test: PASS");
     return 0;
 }

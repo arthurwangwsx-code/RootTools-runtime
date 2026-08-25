@@ -213,12 +213,14 @@ struct ProvidersView: View {
 struct PackagesView: View {
     @State private var packages: [StagedPackageDescriptor] = []
     @State private var history: [PackageHistoryEvent] = []
+    @State private var selfUpdates: [SelfUpdateDescriptor] = []
     @State private var importing = false
     @State private var running = false
     @State private var message = "Stage a DEB, IPA, or TIPA into the RootTools-owned package store."
     @State private var pendingInstall: StagedPackageDescriptor?
     @State private var pendingUninstall: StagedPackageDescriptor?
     @State private var pendingRollback: StagedPackageDescriptor?
+    @State private var pendingSelfUpdate: StagedPackageDescriptor?
 
     var body: some View {
         List {
@@ -263,6 +265,25 @@ struct PackagesView: View {
                             Text(event.identifier).font(.caption.monospaced()).textSelection(.enabled)
                             Text("\(event.providerId) · #\(event.sequence)")
                                 .font(.caption2).foregroundStyle(.tertiary)
+                        }
+                    }
+                }
+            }
+
+            if !selfUpdates.isEmpty {
+                Section("RootTools updates") {
+                    ForEach(selfUpdates.prefix(6)) { update in
+                        VStack(alignment: .leading, spacing: 3) {
+                            HStack {
+                                Text(update.state.uppercased()).font(.caption2.weight(.bold))
+                                Spacer()
+                                if !update.targetVersion.isEmpty {
+                                    Text("v\(update.targetVersion)").font(.caption2.monospaced())
+                                }
+                            }
+                            Text(update.requestId).font(.caption2.monospaced()).foregroundStyle(.secondary)
+                            if let result = update.result { Text(result).font(.caption2).foregroundStyle(.secondary) }
+                            if let error = update.error { Text(error).font(.caption2).foregroundStyle(.red) }
                         }
                     }
                 }
@@ -342,6 +363,25 @@ struct PackagesView: View {
                 Text("R2 owner confirmation. The retained, SHA-256-verified artifact \(package.name) will become active again through its fixed provider.")
             }
         }
+        .confirmationDialog(
+            "Update RootTools?",
+            isPresented: Binding(
+                get: { pendingSelfUpdate != nil },
+                set: { if !$0 { pendingSelfUpdate = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Schedule Update", role: .destructive) {
+                guard let package = pendingSelfUpdate else { return }
+                pendingSelfUpdate = nil
+                Task { await scheduleSelfUpdate(package) }
+            }
+            Button("Cancel", role: .cancel) { pendingSelfUpdate = nil }
+        } message: {
+            if let package = pendingSelfUpdate {
+                Text("R2 owner confirmation. \(package.name) will be handed to the independent updater. The serving daemon records the request first; the updater then switches binaries and rolls back if the new daemon fails health verification.")
+            }
+        }
     }
 
     @ViewBuilder
@@ -370,13 +410,15 @@ struct PackagesView: View {
                 .textSelection(.enabled)
 
             HStack {
-                if package.state == "ready" || package.state == "uninstalled" {
+                if package.state == "ready" && package.format == "deb" && package.expectedIdentifier == "com.arthur.roottools" {
+                    Button("Update RootTools", role: .destructive) { pendingSelfUpdate = package }
+                } else if package.state == "ready" || package.state == "uninstalled" {
                     Button("Install", role: .destructive) { pendingInstall = package }
                 }
-                if package.state == "installed" {
+                if package.state == "installed" && package.expectedIdentifier != "com.arthur.roottools" {
                     Button("Uninstall", role: .destructive) { pendingUninstall = package }
                 }
-                if package.state == "retained" {
+                if package.state == "retained" && package.expectedIdentifier != "com.arthur.roottools" {
                     Button("Rollback", role: .destructive) { pendingRollback = package }
                 }
                 if package.state != "installed" && package.state != "discarded" {
@@ -394,8 +436,10 @@ struct PackagesView: View {
         do {
             async let catalog = DaemonClient.shared.packageCatalog()
             async let historyPayload = DaemonClient.shared.packageHistory()
+            async let updatePayload = DaemonClient.shared.selfUpdateStatus()
             packages = try await catalog.packages
             history = (try? await historyPayload.events) ?? []
+            selfUpdates = (try? await updatePayload.updates) ?? []
         } catch {
             message = error.localizedDescription
         }
@@ -454,6 +498,21 @@ struct PackagesView: View {
         do {
             let receipt = try await DaemonClient.shared.uninstallPackage(package, confirmed: true)
             message = "\(receipt.ok ? "UNINSTALLED" : "FAILED") · \(receipt.providerId ?? "—") · \(receipt.message)"
+            await refresh()
+        } catch {
+            message = error.localizedDescription
+            await refresh()
+        }
+    }
+
+    @MainActor
+    private func scheduleSelfUpdate(_ package: StagedPackageDescriptor) async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            let receipt = try await DaemonClient.shared.scheduleSelfUpdate(package, confirmed: true)
+            message = "\(receipt.ok ? "UPDATE QUEUED" : "FAILED") · \(receipt.providerId ?? "—") · \(receipt.message)"
             await refresh()
         } catch {
             message = error.localizedDescription

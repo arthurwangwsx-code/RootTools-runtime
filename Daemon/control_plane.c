@@ -19,6 +19,7 @@ static const RTCapability kCapabilities[] = {
     {"device.package.plan",        NULL,                "Resolve package format to a provider",  RT_RISK_R0, 0, 1, 1},
     {"device.package.list",        NULL,                "List RootTools staged packages",        RT_RISK_R0, 0, 1, 1},
     {"device.package.history",     NULL,                "Package install lifecycle history",      RT_RISK_R0, 0, 1, 1},
+    {"device.self-update.status",  NULL,                "RootTools independent update status",    RT_RISK_R0, 0, 1, 1},
     {"device.lock.observe",        NULL,                "Lock and display readiness state",       RT_RISK_R0, 0, 1, 1},
     {"device.automation.observe",  NULL,                "Headless and UI automation readiness",  RT_RISK_R0, 0, 1, 1},
     {"device.automation.queue.read",NULL,               "Deferred automation job queue",          RT_RISK_R0, 0, 1, 1},
@@ -53,6 +54,7 @@ static const RTCapability kCapabilities[] = {
     {"device.package.rollback-ipa","package.rollback-ipa","Rollback to a retained IPA/TIPA artifact", RT_RISK_R2, 1, 0, 1},
     {"device.package.uninstall-deb","package.uninstall-deb","Uninstall a managed DEB package",    RT_RISK_R2, 1, 0, 1},
     {"device.package.uninstall-ipa","package.uninstall-ipa","Uninstall a managed TrollStore app", RT_RISK_R2, 1, 0, 1},
+    {"device.self-update.schedule","self-update.schedule","Schedule verified RootTools replacement", RT_RISK_R2, 1, 0, 1},
     {"device.raw-shell",           NULL,                "Arbitrary privileged shell",             RT_RISK_R3, 1, 0, 0},
     {"device.critical-control",    NULL,                "Device-critical privileged operations",  RT_RISK_R3, 1, 0, 0},
 };

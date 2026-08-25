@@ -101,6 +101,7 @@ def main() -> int:
         bootstrap_scope = temp_path / "bootstrap-files"
         package_root = temp_path / "packages"
         package_db = temp_path / "packages.sqlite3"
+        update_db = temp_path / "self-update.sqlite3"
         port = free_port()
         tcc = sqlite3.connect(tcc_path)
         tcc.execute(
@@ -124,6 +125,7 @@ def main() -> int:
             "ROOTTOOLS_BOOTSTRAP_SCOPE_ROOT": str(bootstrap_scope),
             "ROOTTOOLS_PACKAGE_ROOT": str(package_root),
             "ROOTTOOLS_PACKAGE_DB": str(package_db),
+            "ROOTTOOLS_UPDATE_DB": str(update_db),
             "ROOTTOOLS_TEST_LOCK_STATE": "locked",
             "ROOTTOOLS_TEST_SCREEN_BLANKED": "1",
         }
@@ -148,6 +150,7 @@ def main() -> int:
             assert hello["features"]["packageProviderPlanning"] is True
             assert hello["features"]["packageController"] is True
             assert hello["features"]["packageLifecycle"] is True
+            assert hello["features"]["selfUpdater"] is True
             assert hello["features"]["packageChunkBytes"] == 262144
             assert hello["revisionAvailable"] is True
             initial_revision = hello["revision"]
@@ -331,6 +334,61 @@ def main() -> int:
                 parameters={"packageId": ipa_id},
             )
             assert ipa_discard["ok"] is True
+
+            self_payload = b"roottools-self-update-http-fixture"
+            self_id = f"http-self-update-{uuid.uuid4().hex}"
+            self_begin = action(
+                port,
+                args.agent_token,
+                "device.package.stage.begin",
+                parameters={
+                    "packageId": self_id,
+                    "name": "roottools.deb",
+                    "format": "deb",
+                    "expectedIdentifier": "com.arthur.roottools",
+                    "totalSize": len(self_payload),
+                    "sha256": hashlib.sha256(self_payload).hexdigest(),
+                },
+            )
+            assert self_begin["ok"] is True
+            assert action(
+                port,
+                args.agent_token,
+                "device.package.stage.chunk",
+                parameters={"packageId": self_id, "offset": 0, "data": base64.b64encode(self_payload).decode()},
+            )["ok"] is True
+            assert action(
+                port,
+                args.agent_token,
+                "device.package.stage.commit",
+                parameters={"packageId": self_id},
+            )["ok"] is True
+            self_agent = action(
+                port,
+                args.agent_token,
+                "device.self-update.schedule",
+                confirmed=True,
+                parameters={"packageId": self_id},
+            )
+            assert self_agent["result"] == "confirmation_required"
+            self_owner = action(
+                port,
+                args.admin_token,
+                "device.self-update.schedule",
+                confirmed=True,
+                parameters={"packageId": self_id},
+            )
+            assert self_owner["result"] == "provider_unavailable"
+            assert self_owner["executed"] is False
+            status, self_status = request(port, args.agent_token, "GET", "/v1/self-update/status")
+            assert status == 200
+            assert self_status["updates"] == []
+            assert action(
+                port,
+                args.agent_token,
+                "device.package.discard",
+                parameters={"packageId": self_id},
+            )["ok"] is True
 
             status, lock_state = request(port, args.agent_token, "GET", "/v1/device/lock-state")
             assert status == 200

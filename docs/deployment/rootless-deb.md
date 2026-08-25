@@ -11,7 +11,7 @@ python3 Scripts/package-rootless-deb.py
 
 Default output:
 
-`build/packages/roottools_0.7.0-1_iphoneos-arm64.deb`
+`build/packages/roottools_0.8.0-1_iphoneos-arm64.deb`
 
 ## Package allowlist
 
@@ -19,17 +19,19 @@ The package data archive contains only:
 
 - `/var/jb/Applications/RootTools.app/**`
 - `/var/jb/usr/local/bin/roottools-execd`
+- `/var/jb/usr/local/bin/roottools-updater`
 - `/var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist`
+- `/var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist`
 
 The post-install script:
 
-1. signs the App executable and daemon with the jailbreak bootstrap's `/var/jb/usr/bin/ldid`;
+1. signs the App executable, daemon, and independent updater with the jailbreak bootstrap's `/var/jb/usr/bin/ldid`;
 2. fixes executable/ownership metadata;
-3. reloads only `system/com.arthur.roottools.execd`;
+3. reloads the RootTools daemon and registers the one-shot `system/com.arthur.roottools.updater` recovery job;
 4. refreshes the RootTools app registration with `uicache`.
 
 It does not expose or install a general root shell.
 
 ## Why this path exists
 
-The package path is a deployment fallback, not a normal Agent capability. Package installation requires explicit device-owner approval in Sileo/Filza and is intentionally outside the model-facing Device Ops API. Once a trusted RootTools build with a future typed self-update flow is installed, ordinary updates should no longer require host-side privileged shell deployment.
+The package path remains the bootstrap deployment fallback. Starting with v0.8, once a trusted build containing `roottools-updater` is installed, later RootTools DEBs can be staged through the typed Package Controller and scheduled through the owner-confirmed self-update capability without host-side privileged shell replacement.

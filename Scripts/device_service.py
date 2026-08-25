@@ -127,6 +127,9 @@ class DeviceServiceClient:
     def package_history(self) -> dict:
         return self.request("GET", "/v1/packages/history")
 
+    def self_update_status(self) -> dict:
+        return self.request("GET", "/v1/self-update/status")
+
     def runtime_catalog(self) -> dict:
         return self.request("GET", "/v1/runtime/catalog")
 
@@ -285,6 +288,15 @@ class DeviceServiceClient:
         capability = "device.package.rollback-deb" if package.get("format") == "deb" else "device.package.rollback-ipa"
         return self.action(capability, {"packageId": package_id}, confirmed=confirmed, timeout=180)
 
+    def schedule_self_update(self, package_id: str, confirmed: bool) -> dict:
+        rows = self.packages().get("packages", [])
+        package = next((item for item in rows if item.get("packageId") == package_id), None)
+        if not package:
+            raise DeviceServiceError(f"RootTools update package not found: {package_id}")
+        if package.get("format") != "deb" or package.get("expectedIdentifier") != "com.arthur.roottools":
+            raise DeviceServiceError("Self-update requires a verified com.arthur.roottools DEB")
+        return self.action("device.self-update.schedule", {"packageId": package_id}, confirmed=confirmed)
+
     def discard_package(self, package_id: str) -> dict:
         return self.action("device.package.discard", {"packageId": package_id})
 
@@ -327,6 +339,7 @@ def build_parser() -> argparse.ArgumentParser:
     package_plan.add_argument("format", choices=("deb", "ipa", "tipa"))
     sub.add_parser("package-list")
     sub.add_parser("package-history")
+    sub.add_parser("self-update-status")
     package_stage = sub.add_parser("package-stage")
     package_stage.add_argument("file", type=Path)
     package_stage.add_argument("--identifier", default="", help="Optional expected DEB Package ID or iOS bundle ID")
@@ -341,6 +354,9 @@ def build_parser() -> argparse.ArgumentParser:
     package_rollback = sub.add_parser("package-rollback", help="R2 owner action; restore a retained verified package")
     package_rollback.add_argument("package_id")
     package_rollback.add_argument("--confirm", action="store_true", required=True)
+    self_update = sub.add_parser("self-update", help="R2 owner action; schedule an independent RootTools self-update")
+    self_update.add_argument("package_id")
+    self_update.add_argument("--confirm", action="store_true", required=True)
     sub.add_parser("audit")
     sub.add_parser("runtime")
     sub.add_parser("apps")
@@ -420,6 +436,8 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.packages()
     if args.command == "package-history":
         return client.package_history()
+    if args.command == "self-update-status":
+        return client.self_update_status()
     if args.command == "package-stage":
         return client.stage_package(args.file, args.identifier)
     if args.command == "package-install":
@@ -430,6 +448,8 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.uninstall_package(args.package_id, args.confirm)
     if args.command == "package-rollback":
         return client.rollback_package(args.package_id, args.confirm)
+    if args.command == "self-update":
+        return client.schedule_self_update(args.package_id, args.confirm)
     if args.command == "runtime-catalog":
         return client.runtime_catalog()
     if args.command == "lock-state":

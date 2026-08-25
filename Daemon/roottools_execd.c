@@ -31,9 +31,10 @@
 #include "control_plane.h"
 #include "package_controller.h"
 #include "provider_registry.h"
+#include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.7.0"
+#define VERSION "0.8.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1440,6 +1441,13 @@ static void send_package_history(int fd) {
     free(response);
 }
 
+static void send_self_update_status(int fd) {
+    char *response=rt_updates_json();
+    if(!response){send_error(fd,503,"self-update status unavailable");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
+}
+
 static void send_lock_state(int fd) {
     RTLockSnapshot snapshot=device_lock_snapshot();
     char lock_source[256]={0},screen_source[256]={0};
@@ -1520,7 +1528,7 @@ static void send_hello(int fd, RTAuthRole role) {
         "\"authenticatedRole\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
         "\"features\":{\"typedActions\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
-        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
+        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
@@ -1823,6 +1831,19 @@ static void execute_package_uninstall_ipa(const char *body, RTActionExecution *e
     RTPackageOperation op;rt_package_uninstall_ipa(package_id,&op);copy_package_operation(package_id,&op,execution);
 }
 
+static void execute_self_update_schedule(const char *body, const char *request_id, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTUpdateOperation update;
+    rt_update_schedule(request_id,package_id,&update);
+    snprintf(execution->target,sizeof(execution->target),"package=%s update=%s",package_id,request_id);
+    execution->ok=update.ok;execution->executed=update.executed;execution->post_checked=update.post_checked;execution->post_passed=update.post_passed;
+    snprintf(execution->result,sizeof(execution->result),"%s",update.result);
+    snprintf(execution->message,sizeof(execution->message),"%s",update.message);
+    snprintf(execution->post_detail,sizeof(execution->post_detail),"%s",update.post_detail);
+    if(update.output[0])execution->output=strdup(update.output);
+}
+
 static void execute_agent_rotate(RTActionExecution *execution) {
     unsigned char random_bytes[24]; arc4random_buf(random_bytes,sizeof(random_bytes));
     char token[sizeof(random_bytes)*2+1]={0};
@@ -1943,6 +1964,26 @@ static void automation_tick(void) {
     automation_update_job(job_id,attempts+1>=3?"failed":"pending",NULL,"launch failed or process was not observed",1);
 }
 
+static pid_t self_update_child=0;
+
+static void self_update_tick(void) {
+    if(self_update_child>0){
+        int status=0;pid_t reaped=waitpid(self_update_child,&status,WNOHANG);
+        if(reaped==0)return;
+        self_update_child=0;
+    }
+    char request_id[128]={0};
+    if(!rt_update_claim_pending(request_id,sizeof(request_id)))return;
+    char updater[1024]={0};
+    if(!rt_provider_resolve_executable("roottools.updater",updater,sizeof(updater))){
+        rt_update_mark(request_id,"failed",NULL,NULL,"independent updater executable unavailable");return;
+    }
+    char *argv[]={(char*)"roottools-updater",(char*)"--request",request_id,NULL};
+    pid_t pid=0;int rc=posix_spawn(&pid,updater,NULL,NULL,argv,environ);
+    if(rc!=0){rt_update_mark(request_id,"failed",NULL,NULL,"independent updater could not be spawned");return;}
+    self_update_child=pid;
+}
+
 static void route_capability(
     int fd,
     const RTCapability *capability,
@@ -2026,6 +2067,7 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"package.rollback-ipa")) execute_package_rollback_ipa(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.uninstall-deb")) execute_package_uninstall_deb(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.uninstall-ipa")) execute_package_uninstall_ipa(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"self-update.schedule")) execute_self_update_schedule(body,context.request_id,&execution);
     else {snprintf(execution.result,sizeof(execution.result),"denied");snprintf(execution.message,sizeof(execution.message),"No executor registered");}
 
     send_action_receipt(fd,capability,&context,decision,&execution); execution_free(&execution);
@@ -2095,6 +2137,7 @@ static void handle(int fd) {
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan")) send_package_plan(fd,body); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/catalog")) { if(authorize_read_capability(fd,"device.package.list")) send_package_catalog(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/history")) { if(authorize_read_capability(fd,"device.package.history")) send_package_history(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/self-update/status")) { if(authorize_read_capability(fd,"device.self-update.status")) send_self_update_status(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe")) send_lock_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe")) send_automation_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/queue")) { if(authorize_read_capability(fd,"device.automation.queue.read")) send_automation_queue(fd); }
@@ -2131,6 +2174,7 @@ int main(void) {
     ensure_action_dirs();
     automation_recover_incomplete_jobs();
     int s = socket(AF_INET, SOCK_STREAM, 0); if (s < 0) return 2;
+    fcntl(s,F_SETFD,FD_CLOEXEC);
     int one=1; setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     struct sockaddr_in addr={0}; addr.sin_family=AF_INET; addr.sin_port=htons(listen_port()); addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) != 0) return 3;
@@ -2140,5 +2184,6 @@ int main(void) {
         int ready=select(s+1,&rfds,NULL,NULL,&tv);
         if(ready>0&&FD_ISSET(s,&rfds)){int c=accept(s,NULL,NULL);if(c>=0){handle(c);close(c);}}
         automation_tick();
+        self_update_tick();
     }
 }

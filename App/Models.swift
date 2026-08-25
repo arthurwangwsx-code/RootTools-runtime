@@ -208,6 +208,25 @@ struct PackageHistoryPayload: Codable, Equatable {
     var count: Int
 }
 
+struct SelfUpdateDescriptor: Codable, Identifiable, Equatable {
+    var requestId: String
+    var packageId: String
+    var state: String
+    var targetVersion: String
+    var result: String?
+    var error: String?
+    var createdAt: Int64
+    var updatedAt: Int64
+
+    var id: String { requestId }
+}
+
+struct SelfUpdateStatusPayload: Codable, Equatable {
+    var schemaVersion: Int
+    var updates: [SelfUpdateDescriptor]
+    var count: Int
+}
+
 struct ApplicationInspection: Codable, Equatable {
     var bundleID: String
     var executable: String

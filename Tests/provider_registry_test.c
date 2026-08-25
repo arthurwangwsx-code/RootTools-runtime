@@ -14,6 +14,7 @@ int main(void) {
     assert(!strcmp(rt_provider_for_capability("device.permission.tcc"), "permission.tcc"));
     assert(!strcmp(rt_provider_for_capability("device.package.uninstall-deb"), "bootstrap.procursus"));
     assert(!strcmp(rt_provider_for_capability("device.package.rollback-ipa"), "package.trollstore"));
+    assert(!strcmp(rt_provider_for_capability("device.self-update.schedule"), "roottools.updater"));
 
     char *catalog = rt_providers_json();
     assert(catalog != NULL);
