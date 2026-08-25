@@ -44,6 +44,10 @@ private struct CapabilitySetBody: Codable {
     var enabled: Bool
 }
 
+private struct PackagePlanBody: Codable {
+    var format: String
+}
+
 private struct AgentRotateBody: Codable {
     var capabilityId: String
     var requestId: String
@@ -118,6 +122,19 @@ final class DaemonClient {
     func capabilityCatalog() async throws -> CapabilityCatalog {
         let data = try await request(path: "/v1/capabilities/catalog")
         return try decoder.decode(CapabilityCatalog.self, from: data)
+    }
+
+    func providerCatalog() async throws -> ProviderCatalog {
+        let data = try await request(path: "/v1/providers/catalog")
+        return try decoder.decode(ProviderCatalog.self, from: data)
+    }
+
+    func packagePlan(format: String) async throws -> PackageProviderPlan {
+        try await post(
+            path: "/v1/package/plan",
+            body: PackagePlanBody(format: format),
+            response: PackageProviderPlan.self
+        )
     }
 
     func lockState() async throws -> DeviceLockState {
@@ -263,6 +280,7 @@ final class DeviceStore: ObservableObject {
     @Published var status: DeviceStatus = .unavailable
     @Published var capabilities: [DeviceCapabilityDescriptor] = []
     @Published var capabilityInvariants: CapabilityInvariants?
+    @Published var providers: [ProviderDescriptor] = []
     @Published var daemonReachable = false
     @Published var lastError: String?
     @Published var lastRefresh: Date?
@@ -280,11 +298,13 @@ final class DeviceStore: ObservableObject {
                 capabilities = []
                 capabilityInvariants = nil
             }
+            providers = (try? await DaemonClient.shared.providerCatalog())?.providers ?? []
         } catch {
             daemonReachable = false
             lastError = error.localizedDescription
             capabilities = []
             capabilityInvariants = nil
+            providers = []
         }
     }
 

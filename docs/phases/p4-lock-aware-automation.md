@@ -70,6 +70,7 @@ Policy is intentionally conservative:
 - Host deployment dependencies have been hardened: RootTools can discover and forward USB ports directly through pymobiledevice3 when `idevice_id`/`iproxy` are absent, and the install script can use the jailbreak bootstrap's device-side `ldid` when host `ldid` is absent.
 - A current-device read-only regression against installed v0.3 confirms runtime adapters, app inspect, process catalog, filesystem scopes, and network catalog are healthy. The v0.4-only lock/automation endpoints correctly remain unavailable (`404`) until the daemon is upgraded.
 - The installed v0.3 TCC endpoint returned `503 TCC database unavailable`. v0.4 now retries TCC through a strictly read-only SQLite `immutable=1` URI fallback, and the HTTP contract suite validates TCC parsing with a real SQLite fixture. Physical confirmation of this fix requires the v0.4 daemon deployment.
+- v0.5 layers the Provider Plane underneath this design: lock observation binds to native Darwin, screen information binds to ZXTouch, and deferred app launch binds to the SpringBoard provider. The queue remains semantic and does not store provider command strings.
 
 ## Next increments
 

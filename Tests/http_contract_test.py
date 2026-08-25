@@ -137,6 +137,8 @@ def main() -> int:
             assert hello["features"]["durableIdempotency"] is True
             assert hello["features"]["expectedRevision"] is True
             assert hello["features"]["rawPrivilegedShell"] is False
+            assert hello["features"]["providerRegistry"] is True
+            assert hello["features"]["packageProviderPlanning"] is True
             assert hello["revisionAvailable"] is True
             initial_revision = hello["revision"]
             status, owner_hello = request(port, args.admin_token, "GET", "/v1/hello")
@@ -156,6 +158,23 @@ def main() -> int:
             assert status == 200
             assert runtime_catalog["schemaVersion"] == 1
             assert any(item["id"] == "roottools.execd" for item in runtime_catalog["adapters"])
+
+            status, provider_catalog = request(port, args.agent_token, "GET", "/v1/providers/catalog")
+            assert status == 200
+            assert provider_catalog["schemaVersion"] == 1
+            provider_by_id = {item["id"]: item for item in provider_catalog["providers"]}
+            assert provider_by_id["roottools.execd"]["state"] == "available"
+            assert "package.trollstore" in provider_by_id
+            binding_by_capability = {item["capabilityId"]: item for item in provider_catalog["bindings"]}
+            assert binding_by_capability["device.app.launch"]["providerId"] == "ui.springboard"
+
+            status, deb_plan = request(port, args.agent_token, "POST", "/v1/package/plan", {"format": "deb"})
+            assert status == 200
+            assert deb_plan["selectedProviderId"] == "bootstrap.procursus"
+            assert deb_plan["policy"]["rawShell"] is False
+            status, ipa_plan = request(port, args.agent_token, "POST", "/v1/package/plan", {"format": "ipa"})
+            assert status == 200
+            assert ipa_plan["selectedProviderId"] == "package.trollstore"
 
             status, lock_state = request(port, args.agent_token, "GET", "/v1/device/lock-state")
             assert status == 200
@@ -330,6 +349,17 @@ def main() -> int:
             assert stale["policy"] == "stale_revision"
             assert stale["result"] == "stale_revision"
             assert stale["revision"] > stale_revision
+
+            provider_unavailable = action(
+                port,
+                args.agent_token,
+                "device.app.launch",
+                parameters={"bundleID": "com.apple.Preferences"},
+            )
+            assert provider_unavailable["ok"] is False
+            assert provider_unavailable["executed"] is False
+            assert provider_unavailable["result"] == "provider_unavailable"
+            assert provider_unavailable["providerId"] == "ui.springboard"
 
             r2 = action(port, args.agent_token, "device.process.terminate", parameters={"pid": 123})
             assert r2["ok"] is False

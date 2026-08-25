@@ -115,7 +115,7 @@ def main():
     ap=argparse.ArgumentParser()
     ap.add_argument("--udid", default=os.environ.get("ROOTTOOLS_UDID"))
     sub=ap.add_subparsers(dest="action", required=True)
-    e=sub.add_parser("exec"); e.add_argument("command")
+    e=sub.add_parser("exec"); e.add_argument("command"); e.add_argument("--timeout", type=float, default=15.0)
     p=sub.add_parser("push"); p.add_argument("local", type=Path); p.add_argument("remote")
     args=ap.parse_args()
     if args.udid:
@@ -125,7 +125,7 @@ def main():
     else:
         udid=discover_udid()
     if args.action=="exec":
-        rc,out,err=run_root(udid,args.command); print(out,end=''); print(err,end='',file=sys.stderr); raise SystemExit(rc)
+        rc,out,err=run_root(udid,args.command, timeout=args.timeout); print(out,end=''); print(err,end='',file=sys.stderr); raise SystemExit(rc)
     push(udid,args.local,args.remote)
 
 if __name__ == "__main__": main()

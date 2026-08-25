@@ -52,6 +52,10 @@ App/process/filesystem/package/permission inspection first, then carefully scope
 
 Normalize Dopamine, Procursus, launchd, Sileo, Frida, ElleKit, TrollStore, SSH, and ZXTouch behind semantic runtime capabilities. Never expose raw Frida/ElleKit scripting as a model-facing primitive.
 
+**v0.5 Provider Plane foundation implemented:** RootTools now has a daemon-owned Provider Registry, capability-to-provider bindings, provider availability gates, `providerId` in receipts/audit, package-provider planning for DEB/IPA/TIPA, and an owner-facing Providers screen. See `docs/architecture/provider-adapter.md` and `docs/phases/p3-provider-platform.md`.
+
+P3 remains **IN PROGRESS** until concrete executors are fully extracted into provider-specific modules and typed package/runtime mutation has staged input, R2 confirmation, verification, rollback, and physical-device qualification.
+
 ### P4 — UI Automation
 
 Implement `observe -> act -> observe -> verify`: Accessibility first, screenshot/vision as supplementation, ZXTouch as coordinate fallback, and fresh-observation/post-condition checks. Background/virtual scene research comes after the foreground path is stable.
@@ -82,7 +86,8 @@ Each domain converges on:
 
 ## Near-term order
 
-1. Expand P2 read/inspect capability before broad write capability.
-2. Bring Accessibility + ZXTouch behind RootTools in P4.
-3. Add P5 Agent Device Ops only after daemon-side policy is stable.
+1. Finish P3 provider hardening: extract concrete adapters and add the typed Package Controller.
+2. Continue P2 read/inspect breadth without introducing raw write primitives.
+3. Bring Accessibility + ZXTouch semantic UI actions behind the Provider Plane in P4.
+4. Add P5 Agent Device Ops only through stable capability contracts; never expose provider internals as executable primitives.
 

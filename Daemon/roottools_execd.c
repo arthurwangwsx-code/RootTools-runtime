@@ -29,9 +29,10 @@
 #include <unistd.h>
 
 #include "control_plane.h"
+#include "provider_registry.h"
 
 #define PORT 45821
-#define VERSION "0.4.0"
+#define VERSION "0.5.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -557,15 +558,17 @@ static void audit_action(
     ensure_action_dirs();
     FILE *f = fopen(audit_path(), "a");
     if (!f) return;
-    char rid[128]={0}, cid[256]={0}, action[128]={0}, c[128]={0}, t[512]={0}, r[128]={0}, p[128]={0}, m[1024]={0}, pd[1024]={0};
+    char rid[128]={0}, cid[256]={0}, action[128]={0}, provider[256]={0}, c[128]={0}, t[512]={0}, r[128]={0}, p[128]={0}, m[1024]={0}, pd[1024]={0};
     json_escape(request_id, rid, sizeof(rid));
     json_escape(capability ? capability->id : "unknown", cid, sizeof(cid));
     json_escape(capability && capability->legacy_action ? capability->legacy_action : "unknown", action, sizeof(action));
+    const char *provider_id=capability?rt_provider_for_capability(capability->id):NULL;
+    json_escape(provider_id?provider_id:"unbound", provider, sizeof(provider));
     json_escape(caller, c, sizeof(c)); json_escape(target, t, sizeof(t)); json_escape(result, r, sizeof(r));
     json_escape(policy, p, sizeof(p)); json_escape(message, m, sizeof(m)); json_escape(post_detail, pd, sizeof(pd));
     fprintf(f,
-            "{\"time\":%lld,\"requestId\":\"%s\",\"auditId\":\"%s\",\"capabilityId\":\"%s\",\"action\":\"%s\",\"risk\":\"%s\",\"caller\":\"%s\",\"target\":\"%s\",\"ok\":%s,\"executed\":%s,\"revision\":%llu,\"result\":\"%s\",\"policy\":\"%s\",\"message\":\"%s\",\"postCondition\":{\"checked\":%s,\"passed\":%s,\"detail\":\"%s\"}}\n",
-            (long long)time(NULL), rid, audit_id, cid, action, capability ? rt_risk_name(capability->risk) : "R3", c, t,
+            "{\"time\":%lld,\"requestId\":\"%s\",\"auditId\":\"%s\",\"capabilityId\":\"%s\",\"providerId\":\"%s\",\"action\":\"%s\",\"risk\":\"%s\",\"caller\":\"%s\",\"target\":\"%s\",\"ok\":%s,\"executed\":%s,\"revision\":%llu,\"result\":\"%s\",\"policy\":\"%s\",\"message\":\"%s\",\"postCondition\":{\"checked\":%s,\"passed\":%s,\"detail\":\"%s\"}}\n",
+            (long long)time(NULL), rid, audit_id, cid, provider, action, capability ? rt_risk_name(capability->risk) : "R3", c, t,
             ok ? "true" : "false", executed ? "true" : "false", revision, r, p, m, post_checked ? "true" : "false", post_passed ? "true" : "false", pd);
     fclose(f);
 }
@@ -910,8 +913,10 @@ static void send_action_receipt(
         execution->post_checked, execution->post_passed, execution->post_detail, revision
     );
 
-    char rid[256]={0}, cid[512]={0}, action[256]={0}, caller[256]={0}, target[2048]={0}, result[128]={0}, message[2048]={0}, post_detail[2048]={0};
+    char rid[256]={0}, cid[512]={0}, provider[512]={0}, action[256]={0}, caller[256]={0}, target[2048]={0}, result[128]={0}, message[2048]={0}, post_detail[2048]={0};
     json_escape(context->request_id,rid,sizeof(rid)); json_escape(capability->id,cid,sizeof(cid));
+    const char *provider_id=rt_provider_for_capability(capability->id);
+    json_escape(provider_id?provider_id:"unbound",provider,sizeof(provider));
     json_escape(capability->legacy_action ? capability->legacy_action : capability->id,action,sizeof(action));
     json_escape(context->caller,caller,sizeof(caller)); json_escape(execution->target,target,sizeof(target));
     json_escape(execution->result,result,sizeof(result)); json_escape(execution->message,message,sizeof(message));
@@ -925,8 +930,8 @@ static void send_action_receipt(
     char *body = calloc(1, body_cap);
     if(!body){free(escaped_output);send_error(fd,500,"receipt allocation failed; request remains indeterminate");return;}
     snprintf(body,body_cap,
-        "{\"ok\":%s,\"executed\":%s,\"replayed\":false,\"revision\":%llu,\"requestId\":\"%s\",\"auditId\":\"%s\",\"capabilityId\":\"%s\",\"action\":\"%s\",\"risk\":\"%s\",\"caller\":\"%s\",\"target\":\"%s\",\"result\":\"%s\",\"policy\":\"%s\",\"message\":\"%s\",\"postCondition\":{\"checked\":%s,\"passed\":%s,\"detail\":\"%s\"}%s%s%s}",
-        execution->ok?"true":"false",execution->executed?"true":"false",revision,rid,audit_id,cid,action,rt_risk_name(capability->risk),caller,target,result,policy,message,
+        "{\"ok\":%s,\"executed\":%s,\"replayed\":false,\"revision\":%llu,\"requestId\":\"%s\",\"auditId\":\"%s\",\"capabilityId\":\"%s\",\"providerId\":\"%s\",\"action\":\"%s\",\"risk\":\"%s\",\"caller\":\"%s\",\"target\":\"%s\",\"result\":\"%s\",\"policy\":\"%s\",\"message\":\"%s\",\"postCondition\":{\"checked\":%s,\"passed\":%s,\"detail\":\"%s\"}%s%s%s}",
+        execution->ok?"true":"false",execution->executed?"true":"false",revision,rid,audit_id,cid,provider,action,rt_risk_name(capability->risk),caller,target,result,policy,message,
         execution->post_checked?"true":"false",execution->post_passed?"true":"false",post_detail,
         execution->output ? ",\"output\":\"" : "", execution->output ? escaped_output : "", execution->output ? "\"" : "");
     const char *event_kind=!decision.allowed?"rejected":execution->ok?"completed":"failed";
@@ -1326,7 +1331,7 @@ static void send_runtime_catalog(int fd) {
     unsigned long long revision=0; int revision_available=ledger_current_revision(&revision);
     char response[8192]={0};
     snprintf(response,sizeof(response),
-        "{\"schemaVersion\":1,\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"privilegeState\":\"%s\",\"dopamineAppProcessRunning\":%s,\"adapters\":["
+        "{\"schemaVersion\":1,\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"privilegeState\":\"%s\",\"dopamineAppProcessRunning\":%s,\"authoritativeProviderCatalog\":\"/v1/providers/catalog\",\"adapters\":["
         "{\"id\":\"roottools.execd\",\"state\":\"available\",\"implementation\":\"ios.jailbreak-daemon\",\"privilege\":\"uid0\",\"requiresUnlock\":false,\"supportsHeadless\":true,\"survivesAppExit\":true},"
         "{\"id\":\"ios.dopamine.rootless\",\"state\":\"%s\",\"implementation\":\"dopamine.rootless\",\"privilege\":\"jailbreak\",\"requiresUnlock\":false,\"supportsHeadless\":true,\"survivesAppExit\":true},"
         "{\"id\":\"ios.openssh\",\"state\":\"%s\",\"implementation\":\"openssh.loopback-device\",\"privilege\":\"root-service\",\"requiresUnlock\":false,\"supportsHeadless\":true,\"survivesAppExit\":true},"
@@ -1336,6 +1341,22 @@ static void send_runtime_catalog(int fd) {
         getpid(),revision,revision_available?"true":"false",rootless&&getuid()==0?"jailbreak-root":"degraded",dopamine?"true":"false",
         rootless?"available":"unavailable",ssh?"available":"unavailable",frida?"available":"unavailable",zxtouch?"available":"unavailable");
     send_response(fd,200,"application/json",response);
+}
+
+static void send_provider_catalog(int fd) {
+    char *response=rt_providers_json();
+    if(!response){send_error(fd,500,"provider catalog unavailable");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
+}
+
+static void send_package_plan(int fd, const char *body) {
+    char format[32]={0};
+    if(!json_get_string(body,"format",format,sizeof(format))){send_error(fd,400,"format is required");return;}
+    char *response=rt_package_plan_json(format);
+    if(!response){send_error(fd,400,"unsupported package format");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
 }
 
 static void send_lock_state(int fd) {
@@ -1418,7 +1439,7 @@ static void send_hello(int fd, RTAuthRole role) {
         "\"authenticatedRole\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
         "\"features\":{\"typedActions\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
-        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
+        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
@@ -1788,6 +1809,16 @@ static void route_capability(
         send_action_receipt(fd,capability,&context,decision,&execution); execution_free(&execution); return;
     }
 
+    const char *provider_id=rt_provider_for_capability(capability->id);
+    const RTProvider *provider=provider_id?rt_provider_find(provider_id):NULL;
+    int provider_required_now=strcmp(capability->id,"device.automation.queue-app-launch")!=0;
+    if(provider_required_now&&provider&&!rt_provider_available(provider)){
+        snprintf(execution.target,sizeof(execution.target),"provider=%s",provider_id);
+        snprintf(execution.result,sizeof(execution.result),"provider_unavailable");
+        snprintf(execution.message,sizeof(execution.message),"Required provider %s is unavailable",provider_id);
+        send_action_receipt(fd,capability,&context,decision,&execution); execution_free(&execution); return;
+    }
+
     unsigned long long start_revision=0;
     if(!ledger_current_revision(&start_revision)||
        !ledger_append_event(context.request_id,capability->id,context.caller,"started",start_revision)){
@@ -1871,6 +1902,8 @@ static void handle(int fd) {
     }
     if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime")) { if(authorize_read_capability(fd,"device.runtime.observe")) send_text_payload(fd, runtime_text()); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/catalog")) { if(authorize_read_capability(fd,"device.runtime.adapters")) send_runtime_catalog(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/providers/catalog")) { if(authorize_read_capability(fd,"device.providers.read")) send_provider_catalog(fd); }
+    else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan")) send_package_plan(fd,body); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe")) send_lock_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe")) send_automation_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/queue")) { if(authorize_read_capability(fd,"device.automation.queue.read")) send_automation_queue(fd); }

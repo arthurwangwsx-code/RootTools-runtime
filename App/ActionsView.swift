@@ -10,6 +10,7 @@ struct ActionsView: View {
     @State private var result = "No privileged action has been executed from this screen."
     @State private var lastRequestID: String?
     @State private var lastAuditID: String?
+    @State private var lastProviderID: String?
     @State private var confirmProcessTermination = false
     @State private var automationSummary = "Loading lock-aware automation state…"
     @State private var lastQueuedJobID: String?
@@ -106,6 +107,11 @@ struct ActionsView: View {
                         Text(lastAuditID).font(.caption2.monospaced()).textSelection(.enabled)
                     }
                 }
+                if let provider = lastProviderID {
+                    LabeledContent("Provider") {
+                        Text(provider).font(.caption2.monospaced()).textSelection(.enabled)
+                    }
+                }
             }
 
             Section("Policy") {
@@ -146,6 +152,7 @@ struct ActionsView: View {
             let receipt = try await operation()
             lastRequestID = receipt.requestId
             lastAuditID = receipt.auditId
+            lastProviderID = receipt.providerId
             var lines = [
                 "\(receipt.ok ? "OK" : "DENIED/FAILED") · \(receipt.capabilityId ?? receipt.action)",
                 "risk=\(receipt.risk ?? "—") policy=\(receipt.policy ?? "—") executed=\(receipt.executed.map(String.init) ?? "—") replayed=\(receipt.replayed.map(String.init) ?? "—") revision=\(receipt.revision.map(String.init) ?? "—") result=\(receipt.result ?? "—")",
@@ -159,6 +166,7 @@ struct ActionsView: View {
         } catch {
             lastRequestID = nil
             lastAuditID = nil
+            lastProviderID = nil
             result = "ERROR\n\(error.localizedDescription)"
         }
     }

@@ -113,6 +113,12 @@ class DeviceServiceClient:
     def capabilities(self) -> dict:
         return self.request("GET", "/v1/capabilities/catalog")
 
+    def providers(self) -> dict:
+        return self.request("GET", "/v1/providers/catalog")
+
+    def package_plan(self, package_format: str) -> dict:
+        return self.request("POST", "/v1/package/plan", {"format": package_format})
+
     def runtime_catalog(self) -> dict:
         return self.request("GET", "/v1/runtime/catalog")
 
@@ -219,6 +225,9 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("hello")
     sub.add_parser("status")
     sub.add_parser("capabilities")
+    sub.add_parser("providers")
+    package_plan = sub.add_parser("package-plan")
+    package_plan.add_argument("format", choices=("deb", "ipa", "tipa"))
     sub.add_parser("audit")
     sub.add_parser("runtime")
     sub.add_parser("apps")
@@ -290,6 +299,10 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.status()
     if args.command == "capabilities":
         return client.capabilities()
+    if args.command == "providers":
+        return client.providers()
+    if args.command == "package-plan":
+        return client.package_plan(args.format)
     if args.command == "runtime-catalog":
         return client.runtime_catalog()
     if args.command == "lock-state":

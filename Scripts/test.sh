@@ -16,6 +16,10 @@ clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   Tests/control_plane_test.c Daemon/control_plane.c \
   -o build/tests/control_plane_test
 build/tests/control_plane_test
+clang -std=c11 -Wall -Wextra -Werror -I Daemon \
+  Tests/provider_registry_test.c Daemon/provider_registry.c \
+  -o build/tests/provider_registry_test
+build/tests/provider_registry_test
 build/tests/control_plane_test --catalog | python3 -c '
 import json, sys
 catalog=json.load(sys.stdin)
@@ -31,7 +35,7 @@ sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     -e "s/__ROOTTOOLS_AGENT_TOKEN__/$AGENT_TOKEN/g" \
     Daemon/roottools_execd.c > build/tests/roottools_execd_mac.c
 clang -std=c11 -Wall -Wextra -Werror -I Daemon \
-  build/tests/roottools_execd_mac.c Daemon/control_plane.c \
+  build/tests/roottools_execd_mac.c Daemon/control_plane.c Daemon/provider_registry.c \
   -lsqlite3 -framework CoreFoundation -o build/tests/roottools-execd-mac
 python3 Tests/http_contract_test.py \
   --daemon build/tests/roottools-execd-mac \

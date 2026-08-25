@@ -15,6 +15,8 @@ static const RTCapability kCapabilities[] = {
     {"device.status.observe",      NULL,                "Device and daemon health",              RT_RISK_R0, 0, 1, 1},
     {"device.runtime.observe",     NULL,                "Jailbreak runtime state",               RT_RISK_R0, 0, 1, 1},
     {"device.runtime.adapters",    NULL,                "Structured runtime adapter state",      RT_RISK_R0, 0, 1, 1},
+    {"device.providers.read",      NULL,                "Provider registry and capability bindings", RT_RISK_R0, 0, 1, 1},
+    {"device.package.plan",        NULL,                "Resolve package format to a provider",  RT_RISK_R0, 0, 1, 1},
     {"device.lock.observe",        NULL,                "Lock and display readiness state",       RT_RISK_R0, 0, 1, 1},
     {"device.automation.observe",  NULL,                "Headless and UI automation readiness",  RT_RISK_R0, 0, 1, 1},
     {"device.automation.queue.read",NULL,               "Deferred automation job queue",          RT_RISK_R0, 0, 1, 1},

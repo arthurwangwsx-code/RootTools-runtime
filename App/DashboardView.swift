@@ -48,6 +48,8 @@ struct DashboardView: View {
             .navigationDestination(for: ToolKind.self) { tool in
                 if tool == .capabilities {
                     CapabilitiesView()
+                } else if tool == .providers {
+                    ProvidersView()
                 } else if tool == .permissions {
                     PermissionsView()
                 } else if tool == .trustedAgents {
@@ -146,12 +148,18 @@ struct DashboardView: View {
             }
 
             Divider()
-            Text("Runtime adapters").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
-            HStack(spacing: 8) {
-                CapabilityDot(label: "SSH", ready: store.status.sshReady)
-                CapabilityDot(label: "Frida", ready: store.status.fridaReady)
-                CapabilityDot(label: "ZXTouch", ready: store.status.zxTouchReady)
-                CapabilityDot(label: "Dopamine", ready: store.status.dopamineRunning)
+            Text("Provider plane").font(.caption.weight(.semibold)).foregroundStyle(.secondary)
+            if store.providers.isEmpty {
+                Text("Provider catalog unavailable")
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
+            } else {
+                HStack(spacing: 8) {
+                    CapabilityDot(label: "JB", ready: providerReady("jailbreak"))
+                    CapabilityDot(label: "PACKAGE", ready: providerReady("package"))
+                    CapabilityDot(label: "RUNTIME", ready: providerReady("runtime"))
+                    CapabilityDot(label: "UI", ready: providerReady("ui"))
+                }
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
@@ -161,6 +169,10 @@ struct DashboardView: View {
 
     private func enabledCapabilityCount(risk: String) -> Int {
         store.capabilities.filter { $0.risk == risk && $0.enabled }.count
+    }
+
+    private func providerReady(_ domain: String) -> Bool {
+        store.providers.contains { $0.domain == domain && $0.available }
     }
 
     private func formatBytes(_ bytes: UInt64) -> String {

@@ -114,7 +114,7 @@ def run_regression(
     full: bool,
 ) -> None:
     status = client.status()
-    require(status.get("daemonVersion") == "0.4.0", f"expected daemon 0.4.0, got {status}")
+    require(status.get("daemonVersion") == "0.5.0", f"expected daemon 0.5.0, got {status}")
     require(status.get("uid") == 0, f"daemon must be UID 0: {status}")
     require(status.get("jailbreakRootless") is True, f"rootless bootstrap is unavailable: {status}")
     step("daemon identity", f"v{status['daemonVersion']} uid={status['uid']}")
@@ -158,6 +158,17 @@ def run_regression(
         f"unsafe capability invariants: {catalog.get('invariants')}",
     )
     step("capability truth", f"{len(by_id)} registry entries; R3/raw-shell blocked")
+
+    providers = client.providers()
+    provider_by_id = {item["id"]: item for item in providers.get("providers", [])}
+    require(provider_by_id.get("jailbreak.dopamine", {}).get("state") == "available", f"Dopamine provider unavailable: {provider_by_id.get('jailbreak.dopamine')}")
+    require("package.trollstore" in provider_by_id, "TrollStore provider missing")
+    require("runtime.frida" in provider_by_id and "ui.zxtouch" in provider_by_id, "runtime/UI providers missing")
+    deb_plan = client.package_plan("deb")
+    ipa_plan = client.package_plan("ipa")
+    require(deb_plan.get("selectedProviderId") == "bootstrap.procursus", f"unexpected deb provider plan: {deb_plan}")
+    require(ipa_plan.get("selectedProviderId") == "package.trollstore", f"unexpected ipa provider plan: {ipa_plan}")
+    step("provider plane", f"{len(provider_by_id)} providers; deb={deb_plan['selectedProviderId']} ipa={ipa_plan['selectedProviderId']}")
 
     if status.get("zxTouchReady"):
         screen = client.screen_info().get("screen", {})
@@ -314,7 +325,7 @@ def run_regression(
     step("UI / daemon isolation", f"terminated UI pid={ui_pid} uid={ui_uid}")
 
     still_alive = client.status()
-    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.4.0", "daemon died with UI")
+    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.5.0", "daemon died with UI")
     step("daemon survives UI exit", "Device Service still responds")
 
     legacy = client.request(

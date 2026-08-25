@@ -125,6 +125,51 @@ struct CapabilityCatalog: Codable, Equatable {
     var invariants: CapabilityInvariants
 }
 
+struct ProviderDescriptor: Codable, Identifiable, Equatable {
+    var id: String
+    var title: String
+    var domain: String
+    var implementation: String
+    var priority: Int
+    var state: String
+    var supportsHeadless: Bool
+    var requiresUnlock: Bool
+    var survivesAppExit: Bool
+
+    var available: Bool { state == "available" }
+}
+
+struct ProviderBinding: Codable, Identifiable, Equatable {
+    var capabilityId: String
+    var providerId: String
+    var providerAvailable: Bool
+    var id: String { capabilityId }
+}
+
+struct ProviderCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var providers: [ProviderDescriptor]
+    var bindings: [ProviderBinding]
+}
+
+struct PackageProviderPolicy: Codable, Equatable {
+    var rawShell: Bool
+    var arbitraryExecutable: Bool
+    var typedPackageOnly: Bool
+}
+
+struct PackageProviderPlan: Codable, Equatable {
+    var schemaVersion: Int
+    var format: String
+    var mode: String
+    var selectedProviderId: String
+    var ready: Bool
+    var requiresOwnerConfirmation: Bool
+    var fallbackProviderId: String?
+    var fallbackReady: Bool
+    var policy: PackageProviderPolicy
+}
+
 struct ApplicationInspection: Codable, Equatable {
     var bundleID: String
     var executable: String
@@ -189,6 +234,7 @@ struct ActionReceipt: Codable {
     var revision: UInt64?
     var requestId: String?
     var capabilityId: String?
+    var providerId: String?
     var action: String
     var risk: String?
     var caller: String?
@@ -224,6 +270,7 @@ enum FileScope: String, CaseIterable, Identifiable {
 
 enum ToolKind: String, CaseIterable, Identifiable {
     case runtime
+    case providers
     case apps
     case processes
     case files
@@ -239,6 +286,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var title: String {
         switch self {
         case .runtime: return "Jailbreak Runtime"
+        case .providers: return "Providers"
         case .apps: return "Applications"
         case .processes: return "Processes"
         case .files: return "Root Files"
@@ -254,6 +302,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var subtitle: String {
         switch self {
         case .runtime: return "Dopamine · rootless · helper"
+        case .providers: return "Dopamine · TrollStore · Frida · UI"
         case .apps: return "Installed application inventory"
         case .processes: return "PID · UID · executable"
         case .files: return "Bootstrap and mobile paths"
@@ -269,6 +318,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var symbol: String {
         switch self {
         case .runtime: return "lock.open.fill"
+        case .providers: return "point.3.connected.trianglepath.dotted"
         case .apps: return "square.grid.2x2.fill"
         case .processes: return "waveform.path.ecg.rectangle.fill"
         case .files: return "folder.fill.badge.gearshape"
@@ -284,6 +334,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     var endpoint: String {
         switch self {
         case .runtime: return "/v1/runtime"
+        case .providers: return "/v1/providers/catalog"
         case .apps: return "/v1/apps"
         case .processes: return "/v1/processes"
         case .files: return "/v1/files"
