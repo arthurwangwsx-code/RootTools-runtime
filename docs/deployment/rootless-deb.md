@@ -11,7 +11,7 @@ python3 Scripts/package-rootless-deb.py
 
 Default output:
 
-`build/packages/roottools_0.16.0-1_iphoneos-arm64.deb`
+`build/packages/roottools_0.17.0-1_iphoneos-arm64.deb`
 
 ## Package allowlist
 

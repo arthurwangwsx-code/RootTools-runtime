@@ -518,6 +518,10 @@ private struct RootToolDestination: View {
     var body: some View {
         if tool == .performance {
             PerformanceView()
+        } else if tool == .apps {
+            ApplicationsManagerView()
+        } else if tool == .processes {
+            ProcessesManagerView()
         } else if tool == .capabilities {
             CapabilitiesView()
         } else if tool == .providers {

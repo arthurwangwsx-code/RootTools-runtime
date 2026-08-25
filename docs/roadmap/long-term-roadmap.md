@@ -52,6 +52,8 @@ App/process/filesystem/package/permission inspection first, then carefully scope
 
 v0.16 adds the first structured performance/resource snapshot (uptime, load, VM memory distribution, storage, daemon RSS, process/task counts and Provider readiness) and a product-facing Performance screen. Battery/thermal and per-process historical metrics remain later P2 depth increments.
 
+v0.17 deepens Device Management with version/build/source/path aware application inventory and best-effort Darwin per-process resource metrics. Applications and Processes now have structured management screens instead of raw engineering dumps.
+
 ### P3 — Jailbreak & Runtime Platform
 
 Normalize Dopamine, Procursus, launchd, Sileo, Frida, ElleKit, TrollStore, SSH, and ZXTouch behind semantic runtime capabilities. Never expose raw Frida/ElleKit scripting as a model-facing primitive.

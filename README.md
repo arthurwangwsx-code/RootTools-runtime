@@ -45,6 +45,8 @@ The `v0.15.0` line formalizes RootTools permissions into hard policy, Owner poli
 
 The `v0.16.0` line adds a structured performance/resource surface: uptime, load average, VM memory distribution, free storage, daemon resident memory, process count, active device tasks and Provider readiness. The Device tab exposes the same snapshot without falling back to shell parsing.
 
+The `v0.17.0` line turns Applications and Processes into structured management surfaces. App inventory/inspect now includes display name, version, build, source and bundle path; process inspect adds footprint/resident memory, CPU time, disk I/O, page-ins and wakeups through Darwin `proc_pid_rusage` when available. The Device tab uses product lists/details rather than raw dumps.
+
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 
 ## Build and install

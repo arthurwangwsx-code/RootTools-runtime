@@ -103,6 +103,24 @@ def main() -> int:
         package_db = temp_path / "packages.sqlite3"
         update_db = temp_path / "self-update.sqlite3"
         principal_db = temp_path / "principals.sqlite3"
+        system_apps_root = temp_path / "system-apps"
+        jailbreak_apps_root = temp_path / "jailbreak-apps"
+        user_apps_root = temp_path / "user-apps"
+        fixture_app = system_apps_root / "Fixture.app"
+        fixture_app.mkdir(parents=True)
+        jailbreak_apps_root.mkdir(parents=True)
+        user_apps_root.mkdir(parents=True)
+        with (fixture_app / "Info.plist").open("wb") as stream:
+            plistlib.dump(
+                {
+                    "CFBundleIdentifier": "com.example.roottools.fixture",
+                    "CFBundleExecutable": "FixtureExecutable",
+                    "CFBundleDisplayName": "RootTools Fixture",
+                    "CFBundleShortVersionString": "2.4.1",
+                    "CFBundleVersion": "2417",
+                },
+                stream,
+            )
         port = free_port()
         tcc = sqlite3.connect(tcc_path)
         tcc.execute(
@@ -130,6 +148,9 @@ def main() -> int:
             "ROOTTOOLS_PACKAGE_DB": str(package_db),
             "ROOTTOOLS_UPDATE_DB": str(update_db),
             "ROOTTOOLS_PRINCIPAL_DB": str(principal_db),
+            "ROOTTOOLS_SYSTEM_APPS_ROOT": str(system_apps_root),
+            "ROOTTOOLS_JAILBREAK_APPS_ROOT": str(jailbreak_apps_root),
+            "ROOTTOOLS_USER_APPS_ROOT": str(user_apps_root),
             "ROOTTOOLS_TEST_LOCK_STATE": "locked",
             "ROOTTOOLS_TEST_SCREEN_BLANKED": "1",
         }
@@ -779,6 +800,32 @@ def main() -> int:
             assert status == 403
             assert "owner-only" in broad_files["error"]
 
+            status, app_catalog = request(port, args.agent_token, "GET", "/v1/apps/catalog")
+            assert status == 200
+            assert app_catalog["count"] == 1
+            fixture_catalog = app_catalog["applications"][0]
+            assert fixture_catalog["bundleID"] == "com.example.roottools.fixture"
+            assert fixture_catalog["displayName"] == "RootTools Fixture"
+            assert fixture_catalog["version"] == "2.4.1"
+            assert fixture_catalog["build"] == "2417"
+            assert fixture_catalog["source"] == "system"
+            assert fixture_catalog["path"].endswith("/Fixture.app")
+
+            status, app_inspect = request(
+                port,
+                args.agent_token,
+                "POST",
+                "/v1/inspect/app",
+                {"bundleID": "com.example.roottools.fixture"},
+            )
+            assert status == 200
+            fixture_inspection = app_inspect["application"]
+            assert fixture_inspection["displayName"] == "RootTools Fixture"
+            assert fixture_inspection["version"] == "2.4.1"
+            assert fixture_inspection["build"] == "2417"
+            assert fixture_inspection["source"] == "system"
+            assert fixture_inspection["bundlePath"].endswith("/Fixture.app")
+
             status, process_catalog = request(port, args.agent_token, "GET", "/v1/processes/catalog")
             assert status == 200
             assert any(item["pid"] == daemon.pid for item in process_catalog["processes"])
@@ -801,6 +848,19 @@ def main() -> int:
             status, inspected = request(port, args.agent_token, "POST", "/v1/inspect/process", {"pid": daemon.pid})
             assert status == 200
             assert inspected["process"]["pid"] == daemon.pid
+            assert "metricsAvailable" in inspected["process"]
+            assert "metrics" in inspected["process"]
+            assert set(inspected["process"]["metrics"]) == {
+                "userTimeNs",
+                "systemTimeNs",
+                "residentBytes",
+                "footprintBytes",
+                "diskReadBytes",
+                "diskWriteBytes",
+                "pageins",
+                "idleWakeups",
+                "interruptWakeups",
+            }
 
             status, _ = request(
                 port,

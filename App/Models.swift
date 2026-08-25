@@ -420,9 +420,35 @@ struct PrincipalGrantCatalog: Codable, Equatable {
     var count: Int
 }
 
+struct ApplicationDescriptor: Codable, Identifiable, Equatable {
+    var bundleID: String
+    var executable: String
+    var displayName: String
+    var version: String
+    var build: String
+    var source: String
+    var path: String
+    var running: Bool
+    var critical: Bool
+
+    var id: String { bundleID }
+}
+
+struct ApplicationCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var generation: Int
+    var applications: [ApplicationDescriptor]
+    var count: Int
+}
+
 struct ApplicationInspection: Codable, Equatable {
     var bundleID: String
     var executable: String
+    var displayName: String?
+    var version: String?
+    var build: String?
+    var source: String?
+    var bundlePath: String?
     var running: Bool
     var critical: Bool
 }
@@ -432,12 +458,43 @@ struct ApplicationInspectionPayload: Codable, Equatable {
     var application: ApplicationInspection
 }
 
+struct ProcessDescriptor: Codable, Identifiable, Equatable {
+    var pid: Int
+    var uid: Int
+    var command: String
+    var critical: Bool
+    var privileged: Bool
+
+    var id: Int { pid }
+}
+
+struct ProcessCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var generation: Int
+    var processes: [ProcessDescriptor]
+    var count: Int
+}
+
+struct ProcessResourceMetrics: Codable, Equatable {
+    var userTimeNs: UInt64
+    var systemTimeNs: UInt64
+    var residentBytes: UInt64
+    var footprintBytes: UInt64
+    var diskReadBytes: UInt64
+    var diskWriteBytes: UInt64
+    var pageins: UInt64
+    var idleWakeups: UInt64
+    var interruptWakeups: UInt64
+}
+
 struct ProcessInspection: Codable, Equatable {
     var pid: Int
     var uid: Int
     var command: String
     var critical: Bool
     var privileged: Bool
+    var metricsAvailable: Bool?
+    var metrics: ProcessResourceMetrics?
 }
 
 struct ProcessInspectionPayload: Codable, Equatable {

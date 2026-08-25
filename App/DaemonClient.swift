@@ -528,6 +528,11 @@ final class DaemonClient {
         return payload.application
     }
 
+    func applicationCatalog() async throws -> ApplicationCatalog {
+        let data = try await request(path: "/v1/apps/catalog", timeout: 10)
+        return try decoder.decode(ApplicationCatalog.self, from: data)
+    }
+
     func inspectProcess(pid: Int) async throws -> ProcessInspection {
         struct Body: Encodable { var pid: Int }
         let payload: ProcessInspectionPayload = try await post(
@@ -536,6 +541,11 @@ final class DaemonClient {
             response: ProcessInspectionPayload.self
         )
         return payload.process
+    }
+
+    func processCatalog() async throws -> ProcessCatalog {
+        let data = try await request(path: "/v1/processes/catalog", timeout: 10)
+        return try decoder.decode(ProcessCatalog.self, from: data)
     }
 
     func tccPermissions() async throws -> TCCPermissionsPayload {

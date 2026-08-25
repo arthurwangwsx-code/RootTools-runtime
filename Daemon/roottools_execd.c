@@ -19,6 +19,7 @@
 #include <string.h>
 #include <strings.h>
 #include <sys/mount.h>
+#include <sys/resource.h>
 #include <sys/select.h>
 #include <sys/socket.h>
 #include <sys/stat.h>
@@ -37,7 +38,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.16.0"
+#define VERSION "0.17.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -936,6 +937,21 @@ static char *processes_text(int *dopamineRunning) {
     free(items); return out;
 }
 
+static const char *system_apps_root(void) {
+    const char *override=getenv("ROOTTOOLS_SYSTEM_APPS_ROOT");
+    return override&&override[0]?override:"/Applications";
+}
+
+static const char *jailbreak_apps_root(void) {
+    const char *override=getenv("ROOTTOOLS_JAILBREAK_APPS_ROOT");
+    return override&&override[0]?override:"/var/jb/Applications";
+}
+
+static const char *user_apps_root(void) {
+    const char *override=getenv("ROOTTOOLS_USER_APPS_ROOT");
+    return override&&override[0]?override:"/var/containers/Bundle/Application";
+}
+
 static int process_info(pid_t wanted, uid_t *uid_out, char *name, size_t name_cap) {
     size_t length = 0; int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
     if (sysctl(mib, 4, NULL, &length, NULL, 0) != 0 || length == 0) return 0;
@@ -949,6 +965,40 @@ static int process_info(pid_t wanted, uid_t *uid_out, char *name, size_t name_ca
         found = 1; break;
     }
     free(items); return found;
+}
+
+typedef struct {
+    int available;
+    unsigned long long user_time_ns;
+    unsigned long long system_time_ns;
+    unsigned long long resident_bytes;
+    unsigned long long footprint_bytes;
+    unsigned long long disk_read_bytes;
+    unsigned long long disk_write_bytes;
+    unsigned long long pageins;
+    unsigned long long idle_wakeups;
+    unsigned long long interrupt_wakeups;
+} RTProcessMetrics;
+
+typedef int (*RTProcPidRusageFn)(int, int, rusage_info_t *);
+
+static RTProcessMetrics process_metrics(pid_t pid) {
+    RTProcessMetrics metrics={0};
+    RTProcPidRusageFn function=(RTProcPidRusageFn)dlsym(RTLD_DEFAULT,"proc_pid_rusage");
+    if(!function)return metrics;
+    struct rusage_info_v2 usage={0};
+    if(function((int)pid,RUSAGE_INFO_V2,(rusage_info_t *)&usage)!=0)return metrics;
+    metrics.available=1;
+    metrics.user_time_ns=usage.ri_user_time;
+    metrics.system_time_ns=usage.ri_system_time;
+    metrics.resident_bytes=usage.ri_resident_size;
+    metrics.footprint_bytes=usage.ri_phys_footprint;
+    metrics.disk_read_bytes=usage.ri_diskio_bytesread;
+    metrics.disk_write_bytes=usage.ri_diskio_byteswritten;
+    metrics.pageins=usage.ri_pageins;
+    metrics.idle_wakeups=usage.ri_pkg_idle_wkups;
+    metrics.interrupt_wakeups=usage.ri_interrupt_wkups;
+    return metrics;
 }
 
 static int has_suffix(const char *text, const char *suffix) {
@@ -977,9 +1027,9 @@ static void scan_app_dir(char *out, size_t cap, const char *root, int nested) {
 
 static char *apps_text(void) {
     char *out = calloc(1, 65536);
-    appendf(out, 65536, "SYSTEM APPS\n"); scan_app_dir(out, 65536, "/Applications", 0);
-    appendf(out, 65536, "\nJAILBREAK APPS\n"); scan_app_dir(out, 65536, "/var/jb/Applications", 0);
-    appendf(out, 65536, "\nUSER APPS\n"); scan_app_dir(out, 65536, "/var/containers/Bundle/Application", 1);
+    appendf(out, 65536, "SYSTEM APPS\n"); scan_app_dir(out, 65536, system_apps_root(), 0);
+    appendf(out, 65536, "\nJAILBREAK APPS\n"); scan_app_dir(out, 65536, jailbreak_apps_root(), 0);
+    appendf(out, 65536, "\nUSER APPS\n"); scan_app_dir(out, 65536, user_apps_root(), 1);
     return out;
 }
 
@@ -1441,7 +1491,11 @@ static int app_metadata(
     char *executable,
     size_t executable_cap,
     char *display_name,
-    size_t display_cap
+    size_t display_cap,
+    char *version,
+    size_t version_cap,
+    char *build,
+    size_t build_cap
 ) {
     CFStringRef path_string=CFStringCreateWithCString(kCFAllocatorDefault,path,kCFStringEncodingUTF8);
     if(!path_string)return 0;
@@ -1451,6 +1505,8 @@ static int app_metadata(
     CFStringRef identifier=CFBundleGetIdentifier(bundle);
     CFTypeRef executable_value=CFBundleGetValueForInfoDictionaryKey(bundle,kCFBundleExecutableKey);
     CFTypeRef display_value=CFBundleGetValueForInfoDictionaryKey(bundle,CFSTR("CFBundleDisplayName"));
+    CFTypeRef version_value=CFBundleGetValueForInfoDictionaryKey(bundle,CFSTR("CFBundleShortVersionString"));
+    CFTypeRef build_value=CFBundleGetValueForInfoDictionaryKey(bundle,kCFBundleVersionKey);
     if(!display_value)display_value=CFBundleGetValueForInfoDictionaryKey(bundle,kCFBundleNameKey);
     int ok=identifier&&CFGetTypeID(identifier)==CFStringGetTypeID()&&
         executable_value&&CFGetTypeID(executable_value)==CFStringGetTypeID()&&
@@ -1460,6 +1516,14 @@ static int app_metadata(
         if(!display_value||CFGetTypeID(display_value)!=CFStringGetTypeID()||
            !cfstring_copy_utf8((CFStringRef)display_value,display_name,display_cap)){
             snprintf(display_name,display_cap,"%s",bundle_id);
+        }
+        if(version&&version_cap){
+            if(!version_value||CFGetTypeID(version_value)!=CFStringGetTypeID()||
+               !cfstring_copy_utf8((CFStringRef)version_value,version,version_cap))snprintf(version,version_cap,"unknown");
+        }
+        if(build&&build_cap){
+            if(!build_value||CFGetTypeID(build_value)!=CFStringGetTypeID()||
+               !cfstring_copy_utf8((CFStringRef)build_value,build,build_cap))snprintf(build,build_cap,"unknown");
         }
     }
     CFRelease(bundle); return ok;
@@ -1473,14 +1537,14 @@ static int append_app_catalog_entry(
     const char *path,
     const char *source
 ) {
-    char bundle_id[256]={0},executable[256]={0},display[512]={0};
-    if(!app_metadata(path,bundle_id,sizeof(bundle_id),executable,sizeof(executable),display,sizeof(display)))return 0;
-    char ebundle[512]={0},eexec[512]={0},edisplay[1024]={0},epath[2048]={0};
+    char bundle_id[256]={0},executable[256]={0},display[512]={0},version[128]={0},build[128]={0};
+    if(!app_metadata(path,bundle_id,sizeof(bundle_id),executable,sizeof(executable),display,sizeof(display),version,sizeof(version),build,sizeof(build)))return 0;
+    char ebundle[512]={0},eexec[512]={0},edisplay[1024]={0},epath[2048]={0},eversion[256]={0},ebuild[256]={0};
     json_escape(bundle_id,ebundle,sizeof(ebundle)); json_escape(executable,eexec,sizeof(eexec));
-    json_escape(display,edisplay,sizeof(edisplay)); json_escape(path,epath,sizeof(epath));
+    json_escape(display,edisplay,sizeof(edisplay)); json_escape(path,epath,sizeof(epath)); json_escape(version,eversion,sizeof(eversion));json_escape(build,ebuild,sizeof(ebuild));
     int n=snprintf(response+*used,cap-*used,
-        "%s{\"bundleID\":\"%s\",\"executable\":\"%s\",\"displayName\":\"%s\",\"source\":\"%s\",\"path\":\"%s\",\"running\":%s,\"critical\":%s}",
-        row?",":"",ebundle,eexec,edisplay,source,epath,process_name_exists(executable)?"true":"false",critical_process_name(executable)?"true":"false");
+        "%s{\"bundleID\":\"%s\",\"executable\":\"%s\",\"displayName\":\"%s\",\"version\":\"%s\",\"build\":\"%s\",\"source\":\"%s\",\"path\":\"%s\",\"running\":%s,\"critical\":%s}",
+        row?",":"",ebundle,eexec,edisplay,eversion,ebuild,source,epath,process_name_exists(executable)?"true":"false",critical_process_name(executable)?"true":"false");
     if(n<0||(size_t)n>=cap-*used)return -1; *used+=(size_t)n; return 1;
 }
 
@@ -1515,13 +1579,71 @@ static void scan_app_catalog_root(
     closedir(dir);
 }
 
+static int resolve_app_bundle_in_root(
+    const char *wanted_bundle,
+    const char *root,
+    const char *source,
+    int nested,
+    char *path_out,
+    size_t path_cap,
+    char *source_out,
+    size_t source_cap,
+    char *executable_out,
+    size_t executable_cap,
+    char *display_out,
+    size_t display_cap,
+    char *version_out,
+    size_t version_cap,
+    char *build_out,
+    size_t build_cap
+) {
+    DIR *dir=opendir(root); if(!dir)return 0;
+    struct dirent *entry;
+    while((entry=readdir(dir))){
+        if(entry->d_name[0]=='.')continue;
+        char parent[1024]={0};snprintf(parent,sizeof(parent),"%s/%s",root,entry->d_name);
+        if(has_suffix(entry->d_name,".app")){
+            char bundle[256]={0};
+            if(app_metadata(parent,bundle,sizeof(bundle),executable_out,executable_cap,display_out,display_cap,version_out,version_cap,build_out,build_cap)&&!strcmp(bundle,wanted_bundle)){
+                snprintf(path_out,path_cap,"%s",parent);snprintf(source_out,source_cap,"%s",source);closedir(dir);return 1;
+            }
+        } else if(nested) {
+            DIR *sub=opendir(parent);if(!sub)continue;struct dirent *child;
+            while((child=readdir(sub))){
+                if(child->d_name[0]=='.'||!has_suffix(child->d_name,".app"))continue;
+                char child_path[1200]={0};snprintf(child_path,sizeof(child_path),"%s/%s",parent,child->d_name);
+                char bundle[256]={0};
+                if(app_metadata(child_path,bundle,sizeof(bundle),executable_out,executable_cap,display_out,display_cap,version_out,version_cap,build_out,build_cap)&&!strcmp(bundle,wanted_bundle)){
+                    snprintf(path_out,path_cap,"%s",child_path);snprintf(source_out,source_cap,"%s",source);closedir(sub);closedir(dir);return 1;
+                }
+            }
+            closedir(sub);
+        }
+    }
+    closedir(dir);return 0;
+}
+
+static int resolve_app_bundle(
+    const char *bundle,
+    char *path,size_t path_cap,
+    char *source,size_t source_cap,
+    char *executable,size_t executable_cap,
+    char *display,size_t display_cap,
+    char *version,size_t version_cap,
+    char *build,size_t build_cap
+) {
+    return resolve_app_bundle_in_root(bundle,system_apps_root(),"system",0,path,path_cap,source,source_cap,executable,executable_cap,display,display_cap,version,version_cap,build,build_cap)||
+        resolve_app_bundle_in_root(bundle,jailbreak_apps_root(),"jailbreak",0,path,path_cap,source,source_cap,executable,executable_cap,display,display_cap,version,version_cap,build,build_cap)||
+        resolve_app_bundle_in_root(bundle,user_apps_root(),"user",1,path,path_cap,source,source_cap,executable,executable_cap,display,display_cap,version,version_cap,build,build_cap);
+}
+
 static void send_app_catalog(int fd) {
     char *response=calloc(1,65536); if(!response){send_error(fd,500,"app catalog allocation failed");return;}
     size_t used=0; int row=0; int n=snprintf(response,65536,"{\"schemaVersion\":1,\"generation\":%d,\"applications\":[",getpid());
     if(n<0){free(response);send_error(fd,500,"app catalog encoding failed");return;} used=(size_t)n;
-    scan_app_catalog_root(response,65536,&used,&row,"/Applications","system",0);
-    scan_app_catalog_root(response,65536,&used,&row,"/var/jb/Applications","jailbreak",0);
-    scan_app_catalog_root(response,65536,&used,&row,"/var/containers/Bundle/Application","user",1);
+    scan_app_catalog_root(response,65536,&used,&row,system_apps_root(),"system",0);
+    scan_app_catalog_root(response,65536,&used,&row,jailbreak_apps_root(),"jailbreak",0);
+    scan_app_catalog_root(response,65536,&used,&row,user_apps_root(),"user",1);
     n=snprintf(response+used,65536-used,"],\"count\":%d}",row);
     if(n<0||(size_t)n>=65536-used){free(response);send_error(fd,500,"app catalog too large");return;}
     send_response(fd,200,"application/json",response); free(response);
@@ -1532,10 +1654,15 @@ static void send_process_inspect(int fd, const char *body) {
     if(!json_get_int(body,"pid",&raw)||raw<=0||raw>999999){send_error(fd,400,"valid pid is required");return;}
     uid_t uid=0; char name[128]={0};
     if(!process_info((pid_t)raw,&uid,name,sizeof(name))){send_error(fd,404,"process not found");return;}
-    char escaped[256]={0}, response[1024]={0}; json_escape(name,escaped,sizeof(escaped));
+    RTProcessMetrics metrics=process_metrics((pid_t)raw);
+    char escaped[256]={0}, response[3072]={0}; json_escape(name,escaped,sizeof(escaped));
     snprintf(response,sizeof(response),
-        "{\"ok\":true,\"process\":{\"pid\":%ld,\"uid\":%u,\"command\":\"%s\",\"critical\":%s,\"privileged\":%s}}",
-        raw,uid,escaped,critical_process_name(name)?"true":"false",uid==0?"true":"false");
+        "{\"ok\":true,\"process\":{\"pid\":%ld,\"uid\":%u,\"command\":\"%s\",\"critical\":%s,\"privileged\":%s,"
+        "\"metricsAvailable\":%s,\"metrics\":{\"userTimeNs\":%llu,\"systemTimeNs\":%llu,\"residentBytes\":%llu,\"footprintBytes\":%llu,"
+        "\"diskReadBytes\":%llu,\"diskWriteBytes\":%llu,\"pageins\":%llu,\"idleWakeups\":%llu,\"interruptWakeups\":%llu}}}",
+        raw,uid,escaped,critical_process_name(name)?"true":"false",uid==0?"true":"false",metrics.available?"true":"false",
+        metrics.user_time_ns,metrics.system_time_ns,metrics.resident_bytes,metrics.footprint_bytes,
+        metrics.disk_read_bytes,metrics.disk_write_bytes,metrics.pageins,metrics.idle_wakeups,metrics.interrupt_wakeups);
     send_response(fd,200,"application/json",response);
 }
 
@@ -1564,14 +1691,22 @@ static void send_process_catalog(int fd) {
 }
 
 static void send_app_inspect(int fd, const char *body) {
-    char bundle[256]={0}, executable[256]={0};
+    char bundle[256]={0}, executable[256]={0},path[1200]={0},source[64]={0},display[512]={0},version[128]={0},build[128]={0};
     if(!json_get_string(body,"bundleID",bundle,sizeof(bundle))||!safe_bundle_id(bundle)){send_error(fd,400,"valid bundleID is required");return;}
-    if(!executable_for_bundle(bundle,executable,sizeof(executable))){send_error(fd,404,"application could not be resolved");return;}
-    char escaped_executable[512]={0}; json_escape(executable,escaped_executable,sizeof(escaped_executable));
-    char response[1400]={0};
+    if(!resolve_app_bundle(bundle,path,sizeof(path),source,sizeof(source),executable,sizeof(executable),display,sizeof(display),version,sizeof(version),build,sizeof(build))){
+        if(!executable_for_bundle(bundle,executable,sizeof(executable))){send_error(fd,404,"application could not be resolved");return;}
+        snprintf(display,sizeof(display),"%s",bundle);snprintf(version,sizeof(version),"unknown");snprintf(build,sizeof(build),"unknown");snprintf(source,sizeof(source),"registry");
+    }
+    char escaped_executable[512]={0},escaped_display[1024]={0},escaped_version[256]={0},escaped_build[256]={0},escaped_path[2400]={0};
+    json_escape(executable,escaped_executable,sizeof(escaped_executable));json_escape(display,escaped_display,sizeof(escaped_display));
+    json_escape(version,escaped_version,sizeof(escaped_version));json_escape(build,escaped_build,sizeof(escaped_build));json_escape(path,escaped_path,sizeof(escaped_path));
+    char response[5200]={0};
     snprintf(response,sizeof(response),
-        "{\"ok\":true,\"application\":{\"bundleID\":\"%s\",\"executable\":\"%s\",\"running\":%s,\"critical\":%s}}",
-        bundle,escaped_executable,process_name_exists(executable)?"true":"false",critical_process_name(executable)?"true":"false");
+        "{\"ok\":true,\"application\":{\"bundleID\":\"%s\",\"executable\":\"%s\",\"displayName\":\"%s\",\"version\":\"%s\",\"build\":\"%s\","
+        "\"source\":\"%s\",\"bundlePath\":%s%s%s,\"running\":%s,\"critical\":%s}}",
+        bundle,escaped_executable,escaped_display,escaped_version,escaped_build,source,
+        path[0]?"\"":"null",path[0]?escaped_path:"",path[0]?"\"":"",
+        process_name_exists(executable)?"true":"false",critical_process_name(executable)?"true":"false");
     send_response(fd,200,"application/json",response);
 }
 
