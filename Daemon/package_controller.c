@@ -6,6 +6,7 @@
 #include <ctype.h>
 #include <errno.h>
 #include <fcntl.h>
+#include <signal.h>
 #include <spawn.h>
 #include <sqlite3.h>
 #include <stdio.h>
@@ -89,9 +90,10 @@ static int ensure_root(void) {
     return 1;
 }
 
-static int package_path(const char *package_id, char *out, size_t cap) {
-    if(!safe_token(package_id,80))return 0;
-    int n=snprintf(out,cap,"%s/%s.pkg",package_root(),package_id);
+static int package_path(const char *package_id, const char *format, char *out, size_t cap) {
+    if(!safe_token(package_id,80)||!format||
+       (strcmp(format,"deb")&&strcmp(format,"ipa")&&strcmp(format,"tipa")))return 0;
+    int n=snprintf(out,cap,"%s/%s.%s",package_root(),package_id,format);
     return n>0&&(size_t)n<cap;
 }
 
@@ -196,7 +198,7 @@ int rt_package_begin(const char *package_id, const char *name, const char *forma
         return 0;
     }
     char path[1024]={0};
-    if(!package_path(package_id,path,sizeof(path)))return 0;
+    if(!package_path(package_id,format,path,sizeof(path)))return 0;
     int fd=open(path,O_WRONLY|O_CREAT|O_EXCL|O_NOFOLLOW,0600);
     if(fd<0){
         snprintf(op->message,sizeof(op->message),"Package ID already exists or staging file cannot be created");
@@ -247,7 +249,7 @@ int rt_package_append(const char *package_id, long long offset,
     if(!rt_package_get(package_id,&info)||strcmp(info.state,"uploading")){snprintf(op->message,sizeof(op->message),"Package is not accepting chunks");return 0;}
     if(offset!=info.received_size||offset<0||offset+(long long)length>info.total_size){snprintf(op->message,sizeof(op->message),"Package chunk offset is not sequential");return 0;}
     char path[1024]={0};
-    if(!package_path(package_id,path,sizeof(path)))return 0;
+    if(!package_path(package_id,info.format,path,sizeof(path)))return 0;
     int fd=open(path,O_WRONLY|O_NOFOLLOW);
     if(fd<0)return 0;
     ssize_t n=pwrite(fd,bytes,length,(off_t)offset);
@@ -303,7 +305,7 @@ int rt_package_commit(const char *package_id, RTPackageOperation *op) {
     if(!rt_package_get(package_id,&info)||strcmp(info.state,"uploading")){snprintf(op->message,sizeof(op->message),"Package is not an upload-complete candidate");return 0;}
     if(info.received_size!=info.total_size){snprintf(op->message,sizeof(op->message),"Package upload is incomplete");return 0;}
     char path[1024]={0},hash[65]={0};
-    if(!package_path(package_id,path,sizeof(path))||!sha256_file(path,hash)){snprintf(op->message,sizeof(op->message),"Package hash could not be computed");return 0;}
+    if(!package_path(package_id,info.format,path,sizeof(path))||!sha256_file(path,hash)){snprintf(op->message,sizeof(op->message),"Package hash could not be computed");return 0;}
     op->executed=1;op->post_checked=1;op->post_passed=!strcasecmp(hash,info.sha256);
     if(!op->post_passed){
         update_state(package_id,"failed",NULL,"sha256 mismatch");
@@ -349,7 +351,7 @@ int rt_package_discard(const char *package_id, RTPackageOperation *op) {
     if(!rt_package_get(package_id,&info)){snprintf(op->message,sizeof(op->message),"Package not found");return 0;}
     if(!strcmp(info.state,"installed")){snprintf(op->message,sizeof(op->message),"Installed package record cannot be discarded");return 0;}
     char path[1024]={0};
-    if(!package_path(package_id,path,sizeof(path)))return 0;
+    if(!package_path(package_id,info.format,path,sizeof(path)))return 0;
     int rc=unlink(path);
     if(rc!=0&&errno!=ENOENT){snprintf(op->message,sizeof(op->message),"Package file could not be removed");return 0;}
     if(!update_state(package_id,"discarded","discarded",NULL)){snprintf(op->message,sizeof(op->message),"Discard state could not be persisted");return 0;}
@@ -360,7 +362,7 @@ int rt_package_discard(const char *package_id, RTPackageOperation *op) {
     return 1;
 }
 
-static int spawn_capture_bytes(const char *program, char *const argv[], unsigned char *out, size_t cap, size_t *out_length) {
+static int spawn_capture_bytes_timeout(const char *program, char *const argv[], unsigned char *out, size_t cap, size_t *out_length, int timeout_seconds) {
     int pipefd[2]={-1,-1};
     if(pipe(pipefd)!=0)return errno;
     posix_spawn_file_actions_t actions;
@@ -373,31 +375,60 @@ static int spawn_capture_bytes(const char *program, char *const argv[], unsigned
     posix_spawn_file_actions_destroy(&actions);
     close(pipefd[1]);
     if(rc!=0){close(pipefd[0]);return rc;}
+    int flags=fcntl(pipefd[0],F_GETFL,0);
+    if(flags>=0)fcntl(pipefd[0],F_SETFL,flags|O_NONBLOCK);
     size_t used=0;
     unsigned char buffer[4096];
+    int status=0;
+    int timed_out=0;
+    time_t deadline=time(NULL)+(timeout_seconds>0?timeout_seconds:15);
+    for(;;){
+        for(;;){
+            ssize_t n=read(pipefd[0],buffer,sizeof(buffer));
+            if(n>0){
+                if(out&&used<cap){
+                    size_t copy=(size_t)n;
+                    if(copy>cap-used)copy=cap-used;
+                    memcpy(out+used,buffer,copy);
+                    used+=copy;
+                }
+                continue;
+            }
+            if(n<0&&errno==EINTR)continue;
+            break;
+        }
+        pid_t waited=waitpid(pid,&status,WNOHANG);
+        if(waited==pid)break;
+        if(waited<0){int saved=errno;kill(pid,SIGKILL);waitpid(pid,NULL,0);close(pipefd[0]);return saved;}
+        if(time(NULL)>=deadline){
+            kill(pid,SIGKILL);
+            waitpid(pid,&status,0);
+            timed_out=1;
+            break;
+        }
+        usleep(50000);
+    }
     for(;;){
         ssize_t n=read(pipefd[0],buffer,sizeof(buffer));
         if(n<=0)break;
-        if(out&&used<cap){
-            size_t copy=(size_t)n;
-            if(copy>cap-used)copy=cap-used;
-            memcpy(out+used,buffer,copy);
-            used+=copy;
-        }
+        if(out&&used<cap){size_t copy=(size_t)n;if(copy>cap-used)copy=cap-used;memcpy(out+used,buffer,copy);used+=copy;}
     }
     close(pipefd[0]);
-    int status=0;
-    if(waitpid(pid,&status,0)<0)return errno;
     if(out_length)*out_length=used;
+    if(timed_out)return ETIMEDOUT;
     return WIFEXITED(status)?WEXITSTATUS(status):128;
 }
 
-static int spawn_capture(const char *program, char *const argv[], char *out, size_t cap) {
+static int spawn_capture_timeout(const char *program, char *const argv[], char *out, size_t cap, int timeout_seconds) {
     if(!out||cap<2)return EINVAL;
     size_t used=0;
-    int rc=spawn_capture_bytes(program,argv,(unsigned char*)out,cap-1,&used);
+    int rc=spawn_capture_bytes_timeout(program,argv,(unsigned char*)out,cap-1,&used,timeout_seconds);
     out[used]=0;
     return rc;
+}
+
+static int spawn_capture(const char *program, char *const argv[], char *out, size_t cap) {
+    return spawn_capture_timeout(program,argv,out,cap,15);
 }
 
 static int inspect_deb_identifier(const char *path, char *out, size_t cap) {
@@ -587,7 +618,7 @@ int rt_package_install_deb(const char *package_id, RTPackageOperation *op) {
         return 0;
     }
     char path[1024]={0};
-    if(!package_path(package_id,path,sizeof(path))||!verify_deb_identifier(path,info.expected_identifier)){
+    if(!package_path(package_id,info.format,path,sizeof(path))||!verify_deb_identifier(path,info.expected_identifier)){
         snprintf(op->result,sizeof(op->result),"metadata_mismatch");
         snprintf(op->message,sizeof(op->message),"DEB package identifier does not match staged metadata");
         return 0;
@@ -599,16 +630,24 @@ int rt_package_install_deb(const char *package_id, RTPackageOperation *op) {
         return 0;
     }
     char output[8192]={0};
-    char *argv[]={(char*)"dpkg",(char*)"-i",path,NULL};
     op->executed=1;
-    int rc=spawn_capture(dpkg,argv,output,sizeof(output));
+    const char *apt_get="/var/jb/usr/bin/apt-get";
+    int used_apt=access(apt_get,X_OK)==0;
+    int rc=0;
+    if(used_apt){
+        char *argv[]={(char*)"apt-get",(char*)"install",(char*)"-y",(char*)"--no-remove",path,NULL};
+        rc=spawn_capture_timeout(apt_get,argv,output,sizeof(output),180);
+    }else{
+        char *argv[]={(char*)"dpkg",(char*)"-i",path,NULL};
+        rc=spawn_capture_timeout(dpkg,argv,output,sizeof(output),180);
+    }
     op->post_checked=1;
     op->post_passed=rc==0&&verify_deb_installed(info.expected_identifier);
     op->ok=op->post_passed;
     snprintf(op->result,sizeof(op->result),op->ok?"success":"failed");
     snprintf(op->message,sizeof(op->message),op->ok?"DEB package installed and verified":"DEB installation failed or post-condition did not pass");
-    if(op->post_passed)snprintf(op->post_detail,sizeof(op->post_detail),"dpkg-query reports install ok installed");
-    else snprintf(op->post_detail,sizeof(op->post_detail),"dpkg exit=%d or package status mismatch",rc);
+    if(op->post_passed)snprintf(op->post_detail,sizeof(op->post_detail),"%s completed; dpkg-query reports install ok installed",used_apt?"apt-get":"dpkg");
+    else snprintf(op->post_detail,sizeof(op->post_detail),"%s exit=%d or package status mismatch",used_apt?"apt-get":"dpkg",rc);
     update_state(package_id,op->ok?"installed":"failed",op->ok?"installed":NULL,op->ok?NULL:"dpkg install/post-condition failed");
     return op->ok;
 }
@@ -621,7 +660,7 @@ int rt_package_install_ipa(const char *package_id, RTPackageOperation *op) {
         return 0;
     }
     char path[1024]={0},helper[1024]={0};
-    if(!package_path(package_id,path,sizeof(path)))return 0;
+    if(!package_path(package_id,info.format,path,sizeof(path)))return 0;
     if(!rt_provider_resolve_executable("package.trollstore",helper,sizeof(helper))){
         snprintf(op->result,sizeof(op->result),"provider_unavailable");
         snprintf(op->message,sizeof(op->message),"TrollStore helper provider unavailable");
@@ -630,7 +669,7 @@ int rt_package_install_ipa(const char *package_id, RTPackageOperation *op) {
     char output[8192]={0};
     char *argv[]={(char*)"trollstorehelper",(char*)"install",(char*)"custom",path,NULL};
     op->executed=1;
-    int rc=spawn_capture(helper,argv,output,sizeof(output));
+    int rc=spawn_capture_timeout(helper,argv,output,sizeof(output),180);
     int helper_success=rc==0||rc==182||rc==184;
     op->post_checked=1;
     op->post_passed=helper_success&&verify_app_installed(info.expected_identifier);

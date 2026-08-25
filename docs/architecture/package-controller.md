@@ -19,7 +19,7 @@ No caller supplies a device filesystem path, executable, command, argv, maintain
 
 Package staging lives under a RootTools-owned directory and a dedicated SQLite catalog. Defaults:
 
-- package bytes: `/var/mobile/Library/RootTools/packages/<packageId>.pkg`
+- package bytes: `/var/mobile/Library/RootTools/packages/<packageId>.<deb|ipa|tipa>`
 - metadata database: `/var/mobile/Library/RootTools/packages.sqlite3`
 
 Only the daemon derives the final staging path from a validated opaque package ID.
@@ -66,11 +66,13 @@ Requirements:
 
 Execution:
 
-`dpkg -i <daemon-derived-staged-file>`
+If Procursus `apt-get` is available, RootTools uses fixed `apt-get install -y --no-remove <daemon-derived-staged.deb>` so configured repositories may satisfy dependencies without allowing automatic package removal. If `apt-get` is unavailable, the adapter falls back to fixed `dpkg -i <daemon-derived-staged.deb>`.
 
 Post-condition:
 
 fixed `dpkg-query -W -f=${Status} <expected-package-id>` must report `install ok installed`.
+
+Package-manager child processes have a bounded 180-second execution window. Metadata/status probes use shorter bounds. A hung package/helper is terminated rather than permanently blocking the privileged daemon.
 
 ### `device.package.install-ipa` — R2
 
