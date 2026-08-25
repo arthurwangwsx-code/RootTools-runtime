@@ -8,7 +8,9 @@ shell, SSH, or Frida execution primitive.
 from __future__ import annotations
 
 import argparse
+import base64
 import contextlib
+import hashlib
 import json
 import os
 from pathlib import Path
@@ -79,7 +81,7 @@ class DeviceServiceClient:
         self.token = token
         self.caller = caller
 
-    def request(self, method: str, path: str, body: dict | None = None) -> dict:
+    def request(self, method: str, path: str, body: dict | None = None, timeout: float = 4) -> dict:
         data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
         request = urllib.request.Request(
             self.base_url + path,
@@ -91,7 +93,7 @@ class DeviceServiceClient:
             },
         )
         try:
-            with urllib.request.urlopen(request, timeout=4) as response:
+            with urllib.request.urlopen(request, timeout=timeout) as response:
                 payload = response.read()
         except urllib.error.HTTPError as error:
             payload = error.read().decode(errors="replace")
@@ -118,6 +120,9 @@ class DeviceServiceClient:
 
     def package_plan(self, package_format: str) -> dict:
         return self.request("POST", "/v1/package/plan", {"format": package_format})
+
+    def packages(self) -> dict:
+        return self.request("GET", "/v1/packages/catalog")
 
     def runtime_catalog(self) -> dict:
         return self.request("GET", "/v1/runtime/catalog")
@@ -175,6 +180,7 @@ class DeviceServiceClient:
         confirmed: bool = False,
         request_id: str | None = None,
         expected_revision: int | None = None,
+        timeout: float = 4,
     ) -> dict:
         body = {
             "requestId": request_id or str(uuid.uuid4()),
@@ -189,7 +195,79 @@ class DeviceServiceClient:
             "POST",
             "/v1/action",
             body,
+            timeout=timeout,
         )
+
+    def stage_package(self, package_path: Path, expected_identifier: str = "") -> dict:
+        package_path = package_path.resolve()
+        if not package_path.is_file():
+            raise DeviceServiceError(f"Package file not found: {package_path}")
+        package_format = package_path.suffix.lower().lstrip(".")
+        if package_format not in {"deb", "ipa", "tipa"}:
+            raise DeviceServiceError("Only .deb, .ipa, and .tipa packages are supported")
+        package_id = f"pkg-{uuid.uuid4().hex}"
+        digest = hashlib.sha256()
+        total_size = 0
+        with package_path.open("rb") as stream:
+            while True:
+                chunk = stream.read(1024 * 1024)
+                if not chunk:
+                    break
+                digest.update(chunk)
+                total_size += len(chunk)
+        begin = self.action(
+            "device.package.stage.begin",
+            {
+                "packageId": package_id,
+                "name": package_path.name,
+                "format": package_format,
+                "expectedIdentifier": expected_identifier,
+                "totalSize": total_size,
+                "sha256": digest.hexdigest(),
+            },
+        )
+        if not begin.get("ok"):
+            return begin
+        offset = 0
+        with package_path.open("rb") as stream:
+            while True:
+                chunk = stream.read(256 * 1024)
+                if not chunk:
+                    break
+                receipt = self.action(
+                    "device.package.stage.chunk",
+                    {
+                        "packageId": package_id,
+                        "offset": offset,
+                        "data": base64.b64encode(chunk).decode("ascii"),
+                    },
+                    timeout=15,
+                )
+                if not receipt.get("ok"):
+                    return receipt
+                offset += len(chunk)
+        return self.action(
+            "device.package.stage.commit",
+            {"packageId": package_id},
+            timeout=30,
+        )
+
+    def install_package(self, package_id: str, confirmed: bool) -> dict:
+        rows = self.packages().get("packages", [])
+        package = next((item for item in rows if item.get("packageId") == package_id), None)
+        if not package:
+            raise DeviceServiceError(f"Staged package not found: {package_id}")
+        package_format = package.get("format")
+        capability = "device.package.install-deb" if package_format == "deb" else "device.package.install-ipa"
+        return self.action(
+            capability,
+            {"packageId": package_id},
+            confirmed=confirmed,
+            timeout=180,
+        )
+
+    def discard_package(self, package_id: str) -> dict:
+        return self.action("device.package.discard", {"packageId": package_id})
 
 
 def load_token(path: Path) -> str:
@@ -228,6 +306,15 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("providers")
     package_plan = sub.add_parser("package-plan")
     package_plan.add_argument("format", choices=("deb", "ipa", "tipa"))
+    sub.add_parser("package-list")
+    package_stage = sub.add_parser("package-stage")
+    package_stage.add_argument("file", type=Path)
+    package_stage.add_argument("--identifier", default="", help="Optional expected DEB Package ID or iOS bundle ID")
+    package_install = sub.add_parser("package-install", help="R2 owner action; use the admin token file")
+    package_install.add_argument("package_id")
+    package_install.add_argument("--confirm", action="store_true", required=True)
+    package_discard = sub.add_parser("package-discard")
+    package_discard.add_argument("package_id")
     sub.add_parser("audit")
     sub.add_parser("runtime")
     sub.add_parser("apps")
@@ -303,6 +390,14 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.providers()
     if args.command == "package-plan":
         return client.package_plan(args.format)
+    if args.command == "package-list":
+        return client.packages()
+    if args.command == "package-stage":
+        return client.stage_package(args.file, args.identifier)
+    if args.command == "package-install":
+        return client.install_package(args.package_id, args.confirm)
+    if args.command == "package-discard":
+        return client.discard_package(args.package_id)
     if args.command == "runtime-catalog":
         return client.runtime_catalog()
     if args.command == "lock-state":

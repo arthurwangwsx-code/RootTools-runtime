@@ -1,4 +1,5 @@
 import SwiftUI
+import UniformTypeIdentifiers
 
 struct CapabilitiesView: View {
     @EnvironmentObject private var store: DeviceStore
@@ -205,6 +206,176 @@ struct ProvidersView: View {
             errorMessage = nil
         } catch {
             errorMessage = error.localizedDescription
+        }
+    }
+}
+
+struct PackagesView: View {
+    @State private var packages: [StagedPackageDescriptor] = []
+    @State private var importing = false
+    @State private var running = false
+    @State private var message = "Stage a DEB, IPA, or TIPA into the RootTools-owned package store."
+    @State private var pendingInstall: StagedPackageDescriptor?
+
+    var body: some View {
+        List {
+            Section {
+                Button {
+                    importing = true
+                } label: {
+                    Label("Stage Package", systemImage: "square.and.arrow.down")
+                }
+                .disabled(running)
+
+                if running { ProgressView("Processing package…") }
+                Text(message)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            } header: {
+                Text("Package Controller")
+            } footer: {
+                Text("Files are SHA-256 verified in a RootTools-owned staging area. Install is an R2 owner action routed only to the selected fixed provider; no package path or command is caller-controlled.")
+            }
+
+            Section("Staged packages") {
+                if packages.isEmpty {
+                    Text("No staged packages")
+                        .foregroundStyle(.secondary)
+                }
+                ForEach(packages) { package in
+                    packageRow(package)
+                }
+            }
+        }
+        .navigationTitle("Packages")
+        .navigationBarTitleDisplayMode(.inline)
+        .task { await refresh() }
+        .refreshable { await refresh() }
+        .fileImporter(
+            isPresented: $importing,
+            allowedContentTypes: [.data],
+            allowsMultipleSelection: false
+        ) { result in
+            switch result {
+            case .success(let urls):
+                guard let url = urls.first else { return }
+                Task { await stage(url) }
+            case .failure(let error):
+                message = error.localizedDescription
+            }
+        }
+        .confirmationDialog(
+            "Install staged package?",
+            isPresented: Binding(
+                get: { pendingInstall != nil },
+                set: { if !$0 { pendingInstall = nil } }
+            ),
+            titleVisibility: .visible
+        ) {
+            Button("Install", role: .destructive) {
+                guard let package = pendingInstall else { return }
+                pendingInstall = nil
+                Task { await install(package) }
+            }
+            Button("Cancel", role: .cancel) { pendingInstall = nil }
+        } message: {
+            if let package = pendingInstall {
+                Text("R2 owner confirmation. \(package.name) will be installed through \(package.format == "deb" ? "Procursus/dpkg" : "TrollStore") and verified after installation.")
+            }
+        }
+    }
+
+    @ViewBuilder
+    private func packageRow(_ package: StagedPackageDescriptor) -> some View {
+        VStack(alignment: .leading, spacing: 7) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(package.name).font(.subheadline.weight(.semibold))
+                Spacer()
+                Text(package.state.uppercased())
+                    .font(.caption2.weight(.bold))
+                    .padding(.horizontal, 7).padding(.vertical, 4)
+                    .background(Color.primary.opacity(0.07), in: Capsule())
+            }
+            Text("\(package.format.uppercased()) · \(ByteCountFormatter.string(fromByteCount: package.totalSize, countStyle: .file))")
+                .font(.caption)
+                .foregroundStyle(.secondary)
+            if !package.expectedIdentifier.isEmpty {
+                Text(package.expectedIdentifier)
+                    .font(.caption2.monospaced())
+                    .foregroundStyle(.secondary)
+                    .textSelection(.enabled)
+            }
+            Text(package.packageId)
+                .font(.caption2.monospaced())
+                .foregroundStyle(.tertiary)
+                .textSelection(.enabled)
+
+            HStack {
+                if package.state == "ready" {
+                    Button("Install", role: .destructive) { pendingInstall = package }
+                }
+                if package.state != "installed" && package.state != "discarded" {
+                    Spacer()
+                    Button("Discard") { Task { await discard(package) } }
+                }
+            }
+            .disabled(running)
+        }
+        .padding(.vertical, 4)
+    }
+
+    @MainActor
+    private func refresh() async {
+        do {
+            packages = try await DaemonClient.shared.packageCatalog().packages
+        } catch {
+            message = error.localizedDescription
+        }
+    }
+
+    @MainActor
+    private func stage(_ url: URL) async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            let receipt = try await DaemonClient.shared.stagePackage(url: url)
+            message = "READY · \(receipt.providerId ?? "roottools.execd") · \(receipt.message)"
+            await refresh()
+        } catch {
+            message = error.localizedDescription
+            await refresh()
+        }
+    }
+
+    @MainActor
+    private func install(_ package: StagedPackageDescriptor) async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            let receipt = try await DaemonClient.shared.installPackage(package, confirmed: true)
+            message = "\(receipt.ok ? "INSTALLED" : "FAILED") · \(receipt.providerId ?? "—") · \(receipt.message)"
+            await refresh()
+        } catch {
+            message = error.localizedDescription
+            await refresh()
+        }
+    }
+
+    @MainActor
+    private func discard(_ package: StagedPackageDescriptor) async {
+        guard !running else { return }
+        running = true
+        defer { running = false }
+        do {
+            let receipt = try await DaemonClient.shared.discardPackage(package)
+            message = receipt.message
+            await refresh()
+        } catch {
+            message = error.localizedDescription
+            await refresh()
         }
     }
 }

@@ -87,11 +87,11 @@ The plan reports readiness and always declares owner confirmation. It also asser
 - `arbitraryExecutable=false`
 - `typedPackageOnly=true`
 
-v0.5 does **not** expose an arbitrary package-path execution endpoint. A future package mutation capability must stage a bounded package in a RootTools-owned scope, validate its type/metadata, require R2 owner confirmation, invoke only the selected fixed provider adapter, and verify the installed package/application as its post-condition.
+v0.6 implements package mutation without exposing an arbitrary package-path execution endpoint. Packages are staged into a RootTools-owned store using bounded chunks, verified by SHA-256 and package identity, require daemon-enforced R2 owner confirmation, invoke only the selected fixed provider adapter, and verify the installed package/application as the post-condition.
 
 The TrollStore provider is deliberately an **application-install provider**, not the RootTools daemon host. The current upstream TrollStore root helper accepts a bounded install command and must run as root, while TrollStore's own documented limitations do not make it a general launch-daemon platform. RootTools therefore keeps the long-lived UID 0 service under the jailbreak/bootstrap provider and uses TrollStore only behind typed IPA/TIPA package operations.
 
-For the future `trollstorehelper` adapter, RootTools will pin a specific helper contract/version rather than discover or forward arbitrary arguments. The current upstream helper parses `install`, optional installation-mode/force flags, and the IPA path; callers will never see or control that argv surface directly.
+The `trollstorehelper` adapter pins a fixed helper contract rather than discovering or forwarding arbitrary arguments. The current upstream helper parses `install`, optional installation-mode/force flags, and the IPA path; RootTools supplies only the fixed `install custom <staged-package>` argv internally. Callers never see or control that argv surface directly.
 
 ## Provider vs capability vs adapter
 

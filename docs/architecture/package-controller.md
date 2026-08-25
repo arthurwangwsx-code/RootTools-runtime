@@ -1,0 +1,153 @@
+# RootTools Package Controller
+
+## Goal
+
+Provide an ADB-like package workflow for a jailbroken iPhone without turning RootTools into a remote root shell.
+
+The package flow is:
+
+`Mac / RootTools.app -> stage metadata -> bounded chunks -> SHA-256 + package identity -> ready -> R2 owner confirmation -> fixed package provider -> post-condition -> receipt/audit`
+
+No caller supplies a device filesystem path, executable, command, argv, maintainer-script command, or TrollStore helper flag.
+
+## Supported formats
+
+- `.deb`: rootless jailbreak package, provider `bootstrap.procursus`.
+- `.ipa` / `.tipa`: persistent application package, provider `package.trollstore`.
+
+## Staging contract
+
+Package staging lives under a RootTools-owned directory and a dedicated SQLite catalog. Defaults:
+
+- package bytes: `/var/mobile/Library/RootTools/packages/<packageId>.pkg`
+- metadata database: `/var/mobile/Library/RootTools/packages.sqlite3`
+
+Only the daemon derives the final staging path from a validated opaque package ID.
+
+Limits/invariants:
+
+- package maximum: 2 GiB;
+- decoded chunk maximum: 256 KiB;
+- chunks must be strictly sequential;
+- files use `O_NOFOLLOW` and mode `0600`;
+- each chunk is synced before the received-size ledger advances;
+- staging starts in `uploading`, moves to `ready` only after SHA-256 verification;
+- hash mismatch or package-identity mismatch moves the record to `failed`;
+- a non-installed staged package can be explicitly discarded.
+
+## Package identity
+
+The host/UI may provide an optional expected identifier. If present, it is an assertion, not a source of truth.
+
+DEB:
+
+- fixed `dpkg-deb -f <staged-file> Package` extracts the package ID.
+
+IPA/TIPA:
+
+- the daemon parses the ZIP central directory itself and must find exactly one top-level `Payload/*.app/Info.plist`;
+- stored and DEFLATE-compressed plist entries are read with bounded zlib decompression;
+- CoreFoundation parses XML or binary plist data;
+- `CFBundleIdentifier` becomes the package identity.
+
+If the caller omitted the identifier, the detected identifier is persisted into the staging record. If a caller supplied one and it differs, the package is rejected before installation.
+
+## Install capabilities
+
+### `device.package.install-deb` — R2
+
+Requirements:
+
+- state is `ready`;
+- format is `deb`;
+- owner/admin confirmation is authenticated by the daemon;
+- DEB Package ID still matches staged metadata at install time;
+- Procursus provider resolves an executable fixed `dpkg`.
+
+Execution:
+
+`dpkg -i <daemon-derived-staged-file>`
+
+Post-condition:
+
+fixed `dpkg-query -W -f=${Status} <expected-package-id>` must report `install ok installed`.
+
+### `device.package.install-ipa` — R2
+
+Requirements:
+
+- state is `ready`;
+- format is `ipa` or `tipa`;
+- daemon-authenticated owner confirmation;
+- TrollStore provider resolves the root helper from the installed TrollStore app bundle.
+
+Execution is pinned to:
+
+`trollstorehelper install custom <daemon-derived-staged-file>`
+
+The helper argv is internal and not caller-configurable.
+
+Post-condition:
+
+the expected bundle ID must resolve through the installed application database (`uicache -i`).
+
+## Host workflow
+
+`Scripts/device_service.py` provides the ADB-like typed client:
+
+```text
+package-stage <file> [--identifier ...]
+package-list
+package-install <packageId> --confirm
+package-discard <packageId>
+```
+
+The stage command computes SHA-256 locally, creates a random package ID, uploads in 256 KiB chunks, and commits the verified package. Installation uses the package record to select DEB vs IPA/TIPA; the host never sends a provider path.
+
+Typical Mac flow:
+
+```bash
+python3 Scripts/device_service.py package-stage ./Example.ipa
+python3 Scripts/device_service.py package-list
+python3 Scripts/device_service.py --token-file .roottools-token package-install <packageId> --confirm
+```
+
+The default host credential is the lower-privilege Agent credential. The install step intentionally requires the owner/admin token file in addition to `--confirm`; an Agent cannot promote its own staged package into an R2 install.
+
+The two-step `package-stage` -> `package-install --confirm` split is deliberate: transport/staging is R1, while package execution is a separate R2 owner-confirmed decision. A convenience wrapper must not silently collapse that approval boundary.
+
+## iOS owner UI
+
+The Packages screen uses the system file importer. It:
+
+- hashes and stages the selected file;
+- lists package state and detected identity;
+- shows provider-aware install confirmation;
+- invokes the same R2 install capability as the host;
+- supports discard for non-installed staged records.
+
+`RootTools.app` remains UID 501. Package installation remains in the UID 0 daemon.
+
+## Self-update boundary
+
+Installing a DEB that replaces `roottools-execd` may terminate the process that is currently producing the install receipt. Therefore RootTools self-update is intentionally not considered complete merely because generic DEB install exists.
+
+A later self-update helper must be a small independent launchd process that:
+
+1. validates an already-ready RootTools package;
+2. performs the replacement outside the serving daemon process;
+3. starts the new daemon;
+4. checks `/v1/hello` version/health;
+5. rolls back if health verification fails.
+
+## Security properties
+
+- no arbitrary remote shell;
+- no arbitrary device path;
+- no arbitrary executable or argv;
+- package bytes are hash-bound before install;
+- package identity is inspected before install;
+- R2 is owner-confirmed at the daemon, not trusted from Agent input;
+- installation goes through a provider binding owned by RootTools;
+- post-condition determines success;
+- all semantic requests retain idempotency, revision, audit, and `providerId` semantics.

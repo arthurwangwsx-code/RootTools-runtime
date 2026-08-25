@@ -114,7 +114,7 @@ def run_regression(
     full: bool,
 ) -> None:
     status = client.status()
-    require(status.get("daemonVersion") == "0.5.0", f"expected daemon 0.5.0, got {status}")
+    require(status.get("daemonVersion") == "0.6.0", f"expected daemon 0.6.0, got {status}")
     require(status.get("uid") == 0, f"daemon must be UID 0: {status}")
     require(status.get("jailbreakRootless") is True, f"rootless bootstrap is unavailable: {status}")
     step("daemon identity", f"v{status['daemonVersion']} uid={status['uid']}")
@@ -169,6 +169,9 @@ def run_regression(
     require(deb_plan.get("selectedProviderId") == "bootstrap.procursus", f"unexpected deb provider plan: {deb_plan}")
     require(ipa_plan.get("selectedProviderId") == "package.trollstore", f"unexpected ipa provider plan: {ipa_plan}")
     step("provider plane", f"{len(provider_by_id)} providers; deb={deb_plan['selectedProviderId']} ipa={ipa_plan['selectedProviderId']}")
+    package_catalog = client.packages()
+    require(package_catalog.get("schemaVersion") == 1, f"package catalog unavailable: {package_catalog}")
+    step("package controller", f"{package_catalog.get('count', 0)} staged package records")
 
     if status.get("zxTouchReady"):
         screen = client.screen_info().get("screen", {})
@@ -325,7 +328,7 @@ def run_regression(
     step("UI / daemon isolation", f"terminated UI pid={ui_pid} uid={ui_uid}")
 
     still_alive = client.status()
-    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.5.0", "daemon died with UI")
+    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.6.0", "daemon died with UI")
     step("daemon survives UI exit", "Device Service still responds")
 
     legacy = client.request(

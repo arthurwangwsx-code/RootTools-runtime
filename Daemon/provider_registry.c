@@ -37,6 +37,7 @@ static const RTProviderBinding kBindings[] = {
     {"device.runtime.adapters", "roottools.execd"},
     {"device.providers.read", "roottools.execd"},
     {"device.package.plan", "roottools.execd"},
+    {"device.package.list", "roottools.execd"},
     {"device.lock.observe", "ios.darwin"},
     {"device.automation.observe", "roottools.execd"},
     {"device.automation.queue.read", "roottools.execd"},
@@ -55,12 +56,18 @@ static const RTProviderBinding kBindings[] = {
     {"device.events.read", "roottools.execd"},
     {"device.fs.read", "ios.darwin"},
     {"device.fs.write", "ios.darwin"},
+    {"device.package.stage.begin", "roottools.execd"},
+    {"device.package.stage.chunk", "roottools.execd"},
+    {"device.package.stage.commit", "roottools.execd"},
+    {"device.package.discard", "roottools.execd"},
     {"device.app.launch", "ui.springboard"},
     {"device.app.terminate", "ui.springboard"},
     {"device.automation.queue-app-launch", "ui.springboard"},
     {"device.automation.cancel", "roottools.execd"},
     {"device.process.terminate", "ios.darwin"},
     {"device.agent.rotate", "roottools.execd"},
+    {"device.package.install-deb", "bootstrap.procursus"},
+    {"device.package.install-ipa", "package.trollstore"},
 };
 
 static int port_open(int port) {
@@ -79,14 +86,17 @@ static int port_open(int port) {
     return rc == 0;
 }
 
-static int bundle_exists_in_root(const char *root, const char *bundle_name, int nested) {
+static int find_bundle_in_root(const char *root, const char *bundle_name, int nested, char *out, size_t cap) {
     DIR *dir = opendir(root);
     if (!dir) return 0;
     struct dirent *entry;
     int found = 0;
     while (!found && (entry = readdir(dir))) {
         if (entry->d_name[0] == '.') continue;
-        if (!strcmp(entry->d_name, bundle_name)) { found = 1; break; }
+        if (!strcmp(entry->d_name, bundle_name)) {
+            if(out&&cap)snprintf(out,cap,"%s/%s",root,entry->d_name);
+            found = 1; break;
+        }
         if (!nested) continue;
         char child[1024];
         int n = snprintf(child, sizeof(child), "%s/%s", root, entry->d_name);
@@ -95,7 +105,10 @@ static int bundle_exists_in_root(const char *root, const char *bundle_name, int 
         if (!sub) continue;
         struct dirent *subentry;
         while ((subentry = readdir(sub))) {
-            if (!strcmp(subentry->d_name, bundle_name)) { found = 1; break; }
+            if (!strcmp(subentry->d_name, bundle_name)) {
+                if(out&&cap)snprintf(out,cap,"%s/%s",child,subentry->d_name);
+                found = 1; break;
+            }
         }
         closedir(sub);
     }
@@ -104,9 +117,15 @@ static int bundle_exists_in_root(const char *root, const char *bundle_name, int 
 }
 
 static int app_bundle_exists(const char *bundle_name) {
-    return bundle_exists_in_root("/var/jb/Applications", bundle_name, 0) ||
-           bundle_exists_in_root("/Applications", bundle_name, 0) ||
-           bundle_exists_in_root("/var/containers/Bundle/Application", bundle_name, 1);
+    return find_bundle_in_root("/var/jb/Applications", bundle_name, 0, NULL, 0) ||
+           find_bundle_in_root("/Applications", bundle_name, 0, NULL, 0) ||
+           find_bundle_in_root("/var/containers/Bundle/Application", bundle_name, 1, NULL, 0);
+}
+
+static int find_app_bundle(const char *bundle_name, char *out, size_t cap) {
+    return find_bundle_in_root("/var/jb/Applications", bundle_name, 0, out, cap) ||
+           find_bundle_in_root("/Applications", bundle_name, 0, out, cap) ||
+           find_bundle_in_root("/var/containers/Bundle/Application", bundle_name, 1, out, cap);
 }
 
 const RTProvider *rt_provider_find(const char *id) {
@@ -142,11 +161,37 @@ const char *rt_provider_domain_name(RTProviderDomain domain) {
 
 int rt_provider_available(const RTProvider *provider) {
     if (!provider) return 0;
+    if (!strcmp(provider->id,"bootstrap.procursus") ||
+        !strcmp(provider->id,"package.trollstore") ||
+        !strcmp(provider->id,"ui.springboard")) {
+        char executable[1024]={0};
+        return rt_provider_resolve_executable(provider->id,executable,sizeof(executable));
+    }
     switch (provider->probe_kind) {
         case RT_PROVIDER_PROBE_ALWAYS: return 1;
         case RT_PROVIDER_PROBE_PATH: return provider->probe_value && access(provider->probe_value, F_OK) == 0;
         case RT_PROVIDER_PROBE_PORT: return provider->probe_port > 0 && port_open(provider->probe_port);
         case RT_PROVIDER_PROBE_APP_BUNDLE: return provider->probe_value && app_bundle_exists(provider->probe_value);
+    }
+    return 0;
+}
+
+int rt_provider_resolve_executable(const char *id, char *out, size_t cap) {
+    if(!id||!out||cap<8)return 0;
+    out[0]=0;
+    if(!strcmp(id,"bootstrap.procursus")){
+        snprintf(out,cap,"/var/jb/usr/bin/dpkg");
+        return access(out,X_OK)==0;
+    }
+    if(!strcmp(id,"package.trollstore")){
+        char app[1024]={0};
+        if(!find_app_bundle("TrollStore.app",app,sizeof(app)))return 0;
+        int n=snprintf(out,cap,"%s/trollstorehelper",app);
+        return n>0&&(size_t)n<cap&&access(out,X_OK)==0;
+    }
+    if(!strcmp(id,"ui.springboard")){
+        snprintf(out,cap,"/var/jb/usr/bin/uiopen");
+        return access(out,X_OK)==0;
     }
     return 0;
 }

@@ -170,6 +170,25 @@ struct PackageProviderPlan: Codable, Equatable {
     var policy: PackageProviderPolicy
 }
 
+struct StagedPackageDescriptor: Codable, Identifiable, Equatable {
+    var packageId: String
+    var name: String
+    var format: String
+    var expectedIdentifier: String
+    var totalSize: Int64
+    var receivedSize: Int64
+    var sha256: String
+    var state: String
+
+    var id: String { packageId }
+}
+
+struct StagedPackageCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var packages: [StagedPackageDescriptor]
+    var count: Int
+}
+
 struct ApplicationInspection: Codable, Equatable {
     var bundleID: String
     var executable: String
@@ -271,6 +290,7 @@ enum FileScope: String, CaseIterable, Identifiable {
 enum ToolKind: String, CaseIterable, Identifiable {
     case runtime
     case providers
+    case packages
     case apps
     case processes
     case files
@@ -287,6 +307,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .runtime: return "Jailbreak Runtime"
         case .providers: return "Providers"
+        case .packages: return "Packages"
         case .apps: return "Applications"
         case .processes: return "Processes"
         case .files: return "Root Files"
@@ -303,6 +324,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .runtime: return "Dopamine · rootless · helper"
         case .providers: return "Dopamine · TrollStore · Frida · UI"
+        case .packages: return "DEB · IPA · TIPA staging and install"
         case .apps: return "Installed application inventory"
         case .processes: return "PID · UID · executable"
         case .files: return "Bootstrap and mobile paths"
@@ -319,6 +341,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .runtime: return "lock.open.fill"
         case .providers: return "point.3.connected.trianglepath.dotted"
+        case .packages: return "shippingbox.fill"
         case .apps: return "square.grid.2x2.fill"
         case .processes: return "waveform.path.ecg.rectangle.fill"
         case .files: return "folder.fill.badge.gearshape"
@@ -335,6 +358,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         switch self {
         case .runtime: return "/v1/runtime"
         case .providers: return "/v1/providers/catalog"
+        case .packages: return "/v1/packages/catalog"
         case .apps: return "/v1/apps"
         case .processes: return "/v1/processes"
         case .files: return "/v1/files"

@@ -41,6 +41,7 @@ size_t rt_provider_count(void);
 const char *rt_provider_domain_name(RTProviderDomain domain);
 int rt_provider_available(const RTProvider *provider);
 const char *rt_provider_for_capability(const char *capability_id);
+int rt_provider_resolve_executable(const char *id, char *out, size_t cap);
 char *rt_providers_json(void);
 char *rt_package_plan_json(const char *format);
 

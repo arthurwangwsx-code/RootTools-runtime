@@ -2,8 +2,10 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
+import plistlib
 from pathlib import Path
 import socket
 import sqlite3
@@ -13,6 +15,7 @@ import time
 import urllib.error
 import urllib.request
 import uuid
+import zipfile
 
 
 def free_port() -> int:
@@ -96,6 +99,8 @@ def main() -> int:
         tcc_path = temp_path / "TCC.db"
         mobile_scope = temp_path / "mobile-files"
         bootstrap_scope = temp_path / "bootstrap-files"
+        package_root = temp_path / "packages"
+        package_db = temp_path / "packages.sqlite3"
         port = free_port()
         tcc = sqlite3.connect(tcc_path)
         tcc.execute(
@@ -117,6 +122,8 @@ def main() -> int:
             "ROOTTOOLS_TCC_DB": str(tcc_path),
             "ROOTTOOLS_MOBILE_SCOPE_ROOT": str(mobile_scope),
             "ROOTTOOLS_BOOTSTRAP_SCOPE_ROOT": str(bootstrap_scope),
+            "ROOTTOOLS_PACKAGE_ROOT": str(package_root),
+            "ROOTTOOLS_PACKAGE_DB": str(package_db),
             "ROOTTOOLS_TEST_LOCK_STATE": "locked",
             "ROOTTOOLS_TEST_SCREEN_BLANKED": "1",
         }
@@ -139,6 +146,8 @@ def main() -> int:
             assert hello["features"]["rawPrivilegedShell"] is False
             assert hello["features"]["providerRegistry"] is True
             assert hello["features"]["packageProviderPlanning"] is True
+            assert hello["features"]["packageController"] is True
+            assert hello["features"]["packageChunkBytes"] == 262144
             assert hello["revisionAvailable"] is True
             initial_revision = hello["revision"]
             status, owner_hello = request(port, args.admin_token, "GET", "/v1/hello")
@@ -175,6 +184,133 @@ def main() -> int:
             status, ipa_plan = request(port, args.agent_token, "POST", "/v1/package/plan", {"format": "ipa"})
             assert status == 200
             assert ipa_plan["selectedProviderId"] == "package.trollstore"
+
+            package_payload = b"roottools-http-package-fixture"
+            package_id = f"http-package-{uuid.uuid4().hex}"
+            package_hash = hashlib.sha256(package_payload).hexdigest()
+            package_begin = action(
+                port,
+                args.agent_token,
+                "device.package.stage.begin",
+                parameters={
+                    "packageId": package_id,
+                    "name": "fixture.deb",
+                    "format": "deb",
+                    "expectedIdentifier": "com.example.fixture",
+                    "totalSize": len(package_payload),
+                    "sha256": package_hash,
+                },
+            )
+            assert package_begin["ok"] is True
+            package_chunk = action(
+                port,
+                args.agent_token,
+                "device.package.stage.chunk",
+                parameters={
+                    "packageId": package_id,
+                    "offset": 0,
+                    "data": base64.b64encode(package_payload).decode(),
+                },
+            )
+            assert package_chunk["ok"] is True
+            package_commit = action(
+                port,
+                args.agent_token,
+                "device.package.stage.commit",
+                parameters={"packageId": package_id},
+            )
+            assert package_commit["ok"] is True
+            assert package_commit["result"] == "ready"
+            status, package_catalog = request(port, args.agent_token, "GET", "/v1/packages/catalog")
+            assert status == 200
+            staged = next(item for item in package_catalog["packages"] if item["packageId"] == package_id)
+            assert staged["state"] == "ready"
+            install_agent = action(
+                port,
+                args.agent_token,
+                "device.package.install-deb",
+                confirmed=True,
+                parameters={"packageId": package_id},
+            )
+            assert install_agent["result"] == "confirmation_required"
+            install_owner = action(
+                port,
+                args.admin_token,
+                "device.package.install-deb",
+                confirmed=True,
+                parameters={"packageId": package_id},
+            )
+            assert install_owner["result"] == "provider_unavailable"
+            assert install_owner["executed"] is False
+            package_discard = action(
+                port,
+                args.agent_token,
+                "device.package.discard",
+                parameters={"packageId": package_id},
+            )
+            assert package_discard["ok"] is True
+            assert package_discard["result"] == "discarded"
+
+            ipa_path = temp_path / "fixture.ipa"
+            with zipfile.ZipFile(ipa_path, "w", compression=zipfile.ZIP_DEFLATED) as archive:
+                archive.writestr(
+                    "Payload/Fixture.app/Info.plist",
+                    plistlib.dumps(
+                        {
+                            "CFBundleIdentifier": "com.example.fixture.ipa",
+                            "CFBundleExecutable": "Fixture",
+                            "CFBundleName": "Fixture",
+                        },
+                        fmt=plistlib.FMT_BINARY,
+                    ),
+                )
+                archive.writestr("Payload/Fixture.app/Fixture", b"fixture executable bytes")
+            ipa_payload = ipa_path.read_bytes()
+            ipa_id = f"http-ipa-{uuid.uuid4().hex}"
+            ipa_begin = action(
+                port,
+                args.agent_token,
+                "device.package.stage.begin",
+                parameters={
+                    "packageId": ipa_id,
+                    "name": "fixture.ipa",
+                    "format": "ipa",
+                    "expectedIdentifier": "",
+                    "totalSize": len(ipa_payload),
+                    "sha256": hashlib.sha256(ipa_payload).hexdigest(),
+                },
+            )
+            assert ipa_begin["ok"] is True
+            ipa_chunk = action(
+                port,
+                args.agent_token,
+                "device.package.stage.chunk",
+                parameters={
+                    "packageId": ipa_id,
+                    "offset": 0,
+                    "data": base64.b64encode(ipa_payload).decode(),
+                },
+            )
+            assert ipa_chunk["ok"] is True
+            ipa_commit = action(
+                port,
+                args.agent_token,
+                "device.package.stage.commit",
+                parameters={"packageId": ipa_id},
+            )
+            assert ipa_commit["ok"] is True
+            status, ipa_catalog = request(port, args.agent_token, "GET", "/v1/packages/catalog")
+            assert status == 200
+            ipa_row = next(item for item in ipa_catalog["packages"] if item["packageId"] == ipa_id)
+            assert ipa_row["state"] == "ready"
+            assert ipa_row["expectedIdentifier"] == "com.example.fixture.ipa"
+            ipa_discard = action(
+                port,
+                args.agent_token,
+                "device.package.discard",
+                parameters={"packageId": ipa_id},
+            )
+            assert ipa_discard["ok"] is True
 
             status, lock_state = request(port, args.agent_token, "GET", "/v1/device/lock-state")
             assert status == 200

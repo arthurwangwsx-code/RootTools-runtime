@@ -29,6 +29,20 @@ Make jailbreak/runtime mechanisms replaceable implementation providers behind st
 - owner confirmation is part of the plan contract;
 - raw shell/arbitrary executable execution remains excluded.
 
+### v0.6 Package Controller
+
+- RootTools-owned package staging directory and SQLite catalog;
+- maximum package size 2 GiB and maximum decoded chunk size 256 KiB;
+- sequential chunk offsets and `O_NOFOLLOW` staging files;
+- streaming SHA-256 verification before a package becomes installable;
+- automatic DEB Package-ID inspection with fixed `dpkg-deb`;
+- automatic IPA/TIPA `CFBundleIdentifier` inspection from one top-level `Payload/*.app/Info.plist` using bounded in-daemon ZIP/DEFLATE parsing and CoreFoundation plist parsing;
+- caller-supplied expected identifier is treated as an assertion and must match detected metadata;
+- `device.package.install-deb` is R2 and uses only fixed Procursus `dpkg -i`, then `dpkg-query` post-condition verification;
+- `device.package.install-ipa` is R2 and uses only the pinned TrollStore `trollstorehelper install custom` adapter, then installed-bundle verification;
+- Mac CLI and iOS owner UI use the same semantic package staging/install protocol;
+- staged package path and provider argv are never caller-controlled.
+
 ### iOS UI
 
 - Providers screen grouped by provider domain;
@@ -48,16 +62,15 @@ Make jailbreak/runtime mechanisms replaceable implementation providers behind st
 
 The Provider Plane foundation is complete, but P3 as a whole remains in progress. Next increments are deliberately ordered:
 
-1. Extract concrete executors from the monolithic daemon into provider-specific implementation files without changing capability contracts.
-2. Add a typed Package Controller with RootTools-owned staging, metadata validation, R2 confirmation, provider-specific install adapters, and post-condition/rollback handling.
-3. Implement the already-researched TrollStore helper contract as a fixed provider adapter only after RootTools-owned package staging and metadata verification are in place; do not expose TrollStore helper argv to callers.
-4. Add Frida/ElleKit semantic runtime operations, never general scripts.
-5. Add provider compatibility/version metadata and fallback selection for alternate jailbreaks.
-6. Physical-device qualification of `/v1/providers/catalog` and provider-bound receipts once v0.5 deployment is available.
+1. Extract the remaining monolithic app/process/filesystem executors into provider-specific implementation files without changing capability contracts.
+2. Add package rollback/uninstall semantics and a separate RootTools self-update helper that survives daemon replacement.
+3. Add Frida/ElleKit semantic runtime operations, never general scripts.
+4. Add provider compatibility/version metadata and fallback selection for alternate jailbreaks.
+5. Physical-device qualification of Provider Plane + Package Controller once v0.6 deployment is available.
 
 ## Definition of done for full P3
 
 - no semantic executor depends on a jailbreak/tool name outside its provider adapter;
-- package install/upgrade is typed, staged, confirmed, audited, verified, and recoverable;
+- package install/upgrade is typed, staged, confirmed, audited, verified, and recoverable, including rollback/uninstall;
 - at least one alternate implementation can replace a provider without changing the caller-facing capability;
 - physical regression verifies provider selection, failure behavior, and recovery.

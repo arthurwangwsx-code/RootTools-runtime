@@ -50,6 +50,8 @@ struct DashboardView: View {
                     CapabilitiesView()
                 } else if tool == .providers {
                     ProvidersView()
+                } else if tool == .packages {
+                    PackagesView()
                 } else if tool == .permissions {
                     PermissionsView()
                 } else if tool == .trustedAgents {

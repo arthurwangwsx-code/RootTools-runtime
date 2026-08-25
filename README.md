@@ -9,6 +9,7 @@ RootTools is evolving from a privileged toolbox into a policy-controlled iOS Dev
 - Long-term roadmap: `docs/roadmap/long-term-roadmap.md`
 - Control Plane architecture: `docs/architecture/control-plane.md`
 - Provider / Adapter architecture: `docs/architecture/provider-adapter.md`
+- Package Controller architecture: `docs/architecture/package-controller.md`
 - P1 implementation plan: `docs/phases/p1-control-plane.md`
 
 The first milestone intentionally kept the privileged surface read-only: device health, jailbreak runtime, apps, processes, selected root filesystem views, network observation, and diagnostics.
@@ -23,7 +24,9 @@ P1 Control Plane is now complete on the `v0.3.0` development line: registry-driv
 
 The `v0.4.0` line starts the lock-aware automation foundation. The UID 0 daemon now exposes typed lock/display readiness, distinguishes headless execution from interactive UI readiness, and persists deferred UI jobs in its SQLite control-plane store. The first deferred verb is `device.automation.queue-app-launch`: when the phone is locked or the display is blanked the job remains pending, and the daemon executes it only after the UI becomes available. Device passcode bypass is explicitly out of policy. See `docs/phases/p4-lock-aware-automation.md`.
 
-The `v0.5.0` line adds the Provider Plane. Capabilities are now bound by the daemon to implementation providers such as Dopamine/Procursus, TrollStore/Sileo, Darwin, Frida/ElleKit, SpringBoard, ZXTouch, and TCC. `GET /v1/providers/catalog` is the implementation truth source; Action receipts/audit identify `providerId`; and `POST /v1/package/plan` resolves DEB and IPA/TIPA formats without exposing raw shell or arbitrary executable control. The iOS UI includes a Providers screen with readiness and package routing previews. Full package mutation remains a later typed R2 capability rather than a generic command surface.
+The `v0.5.0` line adds the Provider Plane. Capabilities are now bound by the daemon to implementation providers such as Dopamine/Procursus, TrollStore/Sileo, Darwin, Frida/ElleKit, SpringBoard, ZXTouch, and TCC. `GET /v1/providers/catalog` is the implementation truth source; Action receipts/audit identify `providerId`; and `POST /v1/package/plan` resolves DEB and IPA/TIPA formats without exposing raw shell or arbitrary executable control. The iOS UI includes a Providers screen with readiness and package routing previews.
+
+The `v0.6.0` line adds the typed Package Controller. Mac clients and the iOS owner UI can stage `.deb`, `.ipa`, and `.tipa` files into a RootTools-owned store using bounded chunks, SHA-256 verification, and package-identity inspection. Installation is an R2 owner-confirmed semantic action: DEB is routed only to the fixed Procursus `dpkg` adapter and verified with `dpkg-query`; IPA/TIPA is routed only to the pinned TrollStore helper contract and verified through the installed bundle record. Callers cannot provide package filesystem paths, executables, or argv. RootTools self-update remains a separate updater concern because replacing the currently serving daemon can interrupt its own receipt lifecycle.
 
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 

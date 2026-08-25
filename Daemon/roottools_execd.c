@@ -29,15 +29,16 @@
 #include <unistd.h>
 
 #include "control_plane.h"
+#include "package_controller.h"
 #include "provider_registry.h"
 
 #define PORT 45821
-#define VERSION "0.5.0"
+#define VERSION "0.6.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
-#define MAX_REQUEST 65536
-#define MAX_ACTION_BODY 24576
+#define MAX_REQUEST 524288
+#define MAX_ACTION_BODY 458752
 #define RT_DEFAULT_AUDIT_PATH "/var/mobile/Library/RootTools/audit.log"
 #define RT_DEFAULT_LEDGER_PATH "/var/mobile/Library/RootTools/idempotency.sqlite3"
 
@@ -1020,6 +1021,72 @@ static int json_get_string(const char *body, const char *key, char *out, size_t 
     if(*p!='"') return 0; out[j]=0; return 1;
 }
 
+static char *json_get_alloc_string(const char *body, const char *key, size_t max_length) {
+    char needle[128];
+    snprintf(needle,sizeof(needle),"\"%s\"",key);
+    const char *p=strstr(body,needle);
+    if(!p)return NULL;
+    p+=strlen(needle);
+    while(*p&&isspace((unsigned char)*p))p++;
+    if(*p!=':')return NULL;
+    p++;
+    while(*p&&isspace((unsigned char)*p))p++;
+    if(*p!='"')return NULL;
+    p++;
+    char *out=calloc(1,max_length+1);
+    if(!out)return NULL;
+    size_t j=0;
+    while(*p&&*p!='"'){
+        if(j>=max_length){free(out);return NULL;}
+        if(*p=='\\'){
+            p++;
+            if(!*p){free(out);return NULL;}
+            if(*p=='n')out[j++]='\n';
+            else if(*p=='r')out[j++]='\r';
+            else if(*p=='t')out[j++]='\t';
+            else if(*p=='"'||*p=='\\'||*p=='/')out[j++]=*p;
+            else {free(out);return NULL;}
+            p++;
+            continue;
+        }
+        out[j++]=*p++;
+    }
+    if(*p!='"'){free(out);return NULL;}
+    out[j]=0;
+    return out;
+}
+
+static int base64_value(unsigned char c) {
+    if(c>='A'&&c<='Z')return c-'A';
+    if(c>='a'&&c<='z')return c-'a'+26;
+    if(c>='0'&&c<='9')return c-'0'+52;
+    if(c=='+')return 62;
+    if(c=='/')return 63;
+    return -1;
+}
+
+static unsigned char *base64_decode(const char *input, size_t *out_length) {
+    size_t length=input?strlen(input):0;
+    if(!length||length%4!=0||length>360000)return NULL;
+    size_t cap=(length/4)*3;
+    unsigned char *out=malloc(cap?cap:1);
+    if(!out)return NULL;
+    size_t j=0;
+    for(size_t i=0;i<length;i+=4){
+        int a=base64_value((unsigned char)input[i]);
+        int b=base64_value((unsigned char)input[i+1]);
+        int c=input[i+2]=='='?-2:base64_value((unsigned char)input[i+2]);
+        int d=input[i+3]=='='?-2:base64_value((unsigned char)input[i+3]);
+        if(a<0||b<0||c==-1||d==-1||(c==-2&&d!=-2)||(i+4<length&&(c==-2||d==-2))){free(out);return NULL;}
+        unsigned int value=((unsigned int)a<<18)|((unsigned int)b<<12)|((unsigned int)(c<0?0:c)<<6)|(unsigned int)(d<0?0:d);
+        out[j++]=(unsigned char)((value>>16)&0xff);
+        if(c!=-2)out[j++]=(unsigned char)((value>>8)&0xff);
+        if(d!=-2)out[j++]=(unsigned char)(value&0xff);
+    }
+    *out_length=j;
+    return out;
+}
+
 static int json_get_int(const char *body, const char *key, long *value) {
     char needle[128]; snprintf(needle,sizeof(needle),"\"%s\"",key); const char *p=strstr(body,needle); if(!p)return 0;
     p+=strlen(needle); while(*p&&isspace((unsigned char)*p))p++; if(*p!=':')return 0; p++; while(*p&&isspace((unsigned char)*p))p++;
@@ -1359,6 +1426,13 @@ static void send_package_plan(int fd, const char *body) {
     free(response);
 }
 
+static void send_package_catalog(int fd) {
+    char *response=rt_packages_json();
+    if(!response){send_error(fd,503,"package staging catalog unavailable");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
+}
+
 static void send_lock_state(int fd) {
     RTLockSnapshot snapshot=device_lock_snapshot();
     char lock_source[256]={0},screen_source[256]={0};
@@ -1439,7 +1513,7 @@ static void send_hello(int fd, RTAuthRole role) {
         "\"authenticatedRole\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
         "\"features\":{\"typedActions\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
-        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
+        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
@@ -1644,6 +1718,80 @@ static void execute_file_read(const char *body, RTActionExecution *execution) {
     snprintf(execution->result,sizeof(execution->result),"success"); snprintf(execution->post_detail,sizeof(execution->post_detail),"bounded read completed"); snprintf(execution->message,sizeof(execution->message),"Read allowed RootTools file");
 }
 
+static void copy_package_operation(const char *package_id, const RTPackageOperation *package, RTActionExecution *execution) {
+    snprintf(execution->target,sizeof(execution->target),"package=%s",package_id?package_id:"unknown");
+    execution->ok=package->ok;
+    execution->executed=package->executed;
+    execution->post_checked=package->post_checked;
+    execution->post_passed=package->post_passed;
+    snprintf(execution->result,sizeof(execution->result),"%s",package->result);
+    snprintf(execution->message,sizeof(execution->message),"%s",package->message);
+    snprintf(execution->post_detail,sizeof(execution->post_detail),"%s",package->post_detail);
+    if(package->output[0])execution->output=strdup(package->output);
+}
+
+static void execute_package_stage_begin(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0},name[192]={0},format[16]={0},identifier[256]={0},sha256[65]={0};
+    long total_size=0;
+    RTPackageOperation op;
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))||
+       !json_get_string(body,"name",name,sizeof(name))||
+       !json_get_string(body,"format",format,sizeof(format))||
+       !json_get_string(body,"expectedIdentifier",identifier,sizeof(identifier))||
+       !json_get_string(body,"sha256",sha256,sizeof(sha256))||
+       !json_get_int(body,"totalSize",&total_size)){
+        snprintf(execution->target,sizeof(execution->target),"invalid package staging request");
+        snprintf(execution->message,sizeof(execution->message),"Package staging metadata is incomplete");
+        return;
+    }
+    rt_package_begin(package_id,name,format,identifier,(long long)total_size,sha256,&op);
+    copy_package_operation(package_id,&op,execution);
+}
+
+static void execute_package_stage_chunk(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    long offset=0;
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))||!json_get_int(body,"offset",&offset)){
+        snprintf(execution->target,sizeof(execution->target),"invalid package chunk request");
+        snprintf(execution->message,sizeof(execution->message),"packageId and offset are required");
+        return;
+    }
+    char *encoded=json_get_alloc_string(body,"data",360000);
+    if(!encoded){snprintf(execution->target,sizeof(execution->target),"package=%s",package_id);snprintf(execution->message,sizeof(execution->message),"Package chunk data is missing or too large");return;}
+    size_t decoded_length=0;
+    unsigned char *decoded=base64_decode(encoded,&decoded_length);
+    free(encoded);
+    if(!decoded){snprintf(execution->target,sizeof(execution->target),"package=%s",package_id);snprintf(execution->message,sizeof(execution->message),"Package chunk base64 is invalid");return;}
+    RTPackageOperation op;
+    rt_package_append(package_id,(long long)offset,decoded,decoded_length,&op);
+    free(decoded);
+    copy_package_operation(package_id,&op,execution);
+}
+
+static void execute_package_stage_commit(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTPackageOperation op;rt_package_commit(package_id,&op);copy_package_operation(package_id,&op,execution);
+}
+
+static void execute_package_discard(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTPackageOperation op;rt_package_discard(package_id,&op);copy_package_operation(package_id,&op,execution);
+}
+
+static void execute_package_install_deb(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTPackageOperation op;rt_package_install_deb(package_id,&op);copy_package_operation(package_id,&op,execution);
+}
+
+static void execute_package_install_ipa(const char *body, RTActionExecution *execution) {
+    char package_id[96]={0};
+    if(!json_get_string(body,"packageId",package_id,sizeof(package_id))){snprintf(execution->message,sizeof(execution->message),"packageId is required");return;}
+    RTPackageOperation op;rt_package_install_ipa(package_id,&op);copy_package_operation(package_id,&op,execution);
+}
+
 static void execute_agent_rotate(RTActionExecution *execution) {
     unsigned char random_bytes[24]; arc4random_buf(random_bytes,sizeof(random_bytes));
     char token[sizeof(random_bytes)*2+1]={0};
@@ -1837,6 +1985,12 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"agent.rotate")) execute_agent_rotate(&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.queue-app-launch")) execute_queue_app_launch(body,context.request_id,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.stage.begin")) execute_package_stage_begin(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.stage.chunk")) execute_package_stage_chunk(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.stage.commit")) execute_package_stage_commit(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.discard")) execute_package_discard(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.install-deb")) execute_package_install_deb(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"package.install-ipa")) execute_package_install_ipa(body,&execution);
     else {snprintf(execution.result,sizeof(execution.result),"denied");snprintf(execution.message,sizeof(execution.message),"No executor registered");}
 
     send_action_receipt(fd,capability,&context,decision,&execution); execution_free(&execution);
@@ -1904,6 +2058,7 @@ static void handle(int fd) {
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/catalog")) { if(authorize_read_capability(fd,"device.runtime.adapters")) send_runtime_catalog(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/providers/catalog")) { if(authorize_read_capability(fd,"device.providers.read")) send_provider_catalog(fd); }
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan")) send_package_plan(fd,body); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/catalog")) { if(authorize_read_capability(fd,"device.package.list")) send_package_catalog(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe")) send_lock_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe")) send_automation_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/queue")) { if(authorize_read_capability(fd,"device.automation.queue.read")) send_automation_queue(fd); }

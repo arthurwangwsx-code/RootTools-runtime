@@ -1,3 +1,4 @@
+import CryptoKit
 import Foundation
 
 private struct DaemonErrorPayload: Codable {
@@ -48,6 +49,37 @@ private struct PackagePlanBody: Codable {
     var format: String
 }
 
+private struct PackageStageBeginBody: Codable {
+    var capabilityId: String
+    var packageId: String
+    var name: String
+    var format: String
+    var expectedIdentifier: String
+    var totalSize: Int64
+    var sha256: String
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
+private struct PackageStageChunkBody: Codable {
+    var capabilityId: String
+    var packageId: String
+    var offset: Int64
+    var data: String
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
+private struct PackageIDActionBody: Codable {
+    var capabilityId: String
+    var packageId: String
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
 private struct AgentRotateBody: Codable {
     var capabilityId: String
     var requestId: String
@@ -66,6 +98,7 @@ private struct AutomationCancelBody: Codable {
 enum DaemonError: LocalizedError {
     case invalidResponse
     case http(Int, String?)
+    case actionFailed(String)
 
     var errorDescription: String? {
         switch self {
@@ -74,6 +107,8 @@ enum DaemonError: LocalizedError {
         case .http(let code, let message):
             if let message, !message.isEmpty { return "Privileged helper HTTP \(code): \(message)" }
             return "Privileged helper returned HTTP \(code)"
+        case .actionFailed(let message):
+            return message
         }
     }
 }
@@ -86,11 +121,11 @@ final class DaemonClient {
     private let decoder = JSONDecoder()
     private let caller = "roottools-ui"
 
-    private func request(path: String, method: String = "GET", body: Data? = nil) async throws -> Data {
+    private func request(path: String, method: String = "GET", body: Data? = nil, timeout: TimeInterval = 4) async throws -> Data {
         var request = URLRequest(url: baseURL.appendingPathComponent(path.trimmingCharacters(in: CharacterSet(charactersIn: "/"))))
         request.httpMethod = method
         request.httpBody = body
-        request.timeoutInterval = 4
+        request.timeoutInterval = timeout
         request.setValue(token, forHTTPHeaderField: "X-RootTools-Token")
         if body != nil { request.setValue("application/json", forHTTPHeaderField: "Content-Type") }
 
@@ -103,9 +138,9 @@ final class DaemonClient {
         return data
     }
 
-    private func post<T: Encodable, R: Decodable>(path: String, body: T, response: R.Type) async throws -> R {
+    private func post<T: Encodable, R: Decodable>(path: String, body: T, response: R.Type, timeout: TimeInterval = 4) async throws -> R {
         let data = try encoder.encode(body)
-        let responseData = try await request(path: path, method: "POST", body: data)
+        let responseData = try await request(path: path, method: "POST", body: data, timeout: timeout)
         return try decoder.decode(R.self, from: responseData)
     }
 
@@ -134,6 +169,123 @@ final class DaemonClient {
             path: "/v1/package/plan",
             body: PackagePlanBody(format: format),
             response: PackageProviderPlan.self
+        )
+    }
+
+    func packageCatalog() async throws -> StagedPackageCatalog {
+        let data = try await request(path: "/v1/packages/catalog")
+        return try decoder.decode(StagedPackageCatalog.self, from: data)
+    }
+
+    func stagePackage(url: URL, expectedIdentifier: String = "") async throws -> ActionReceipt {
+        let accessed = url.startAccessingSecurityScopedResource()
+        defer { if accessed { url.stopAccessingSecurityScopedResource() } }
+        let values = try url.resourceValues(forKeys: [.fileSizeKey, .nameKey])
+        guard let fileSize = values.fileSize, fileSize > 0 else {
+            throw DaemonError.actionFailed("Package file is empty or unavailable")
+        }
+        let name = values.name ?? url.lastPathComponent
+        let format = url.pathExtension.lowercased()
+        guard ["deb", "ipa", "tipa"].contains(format) else {
+            throw DaemonError.actionFailed("Only DEB, IPA, and TIPA packages are supported")
+        }
+
+        var hasher = SHA256()
+        let hashHandle = try FileHandle(forReadingFrom: url)
+        defer { try? hashHandle.close() }
+        while true {
+            let data = try hashHandle.read(upToCount: 1024 * 1024) ?? Data()
+            if data.isEmpty { break }
+            hasher.update(data: data)
+        }
+        let digest = hasher.finalize().map { String(format: "%02x", $0) }.joined()
+        let packageID = "pkg-\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
+
+        let begin = try await post(
+            path: "/v1/action",
+            body: PackageStageBeginBody(
+                capabilityId: "device.package.stage.begin",
+                packageId: packageID,
+                name: name,
+                format: format,
+                expectedIdentifier: expectedIdentifier,
+                totalSize: Int64(fileSize),
+                sha256: digest,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: false
+            ),
+            response: ActionReceipt.self
+        )
+        guard begin.ok else { throw DaemonError.actionFailed(begin.message) }
+
+        let uploadHandle = try FileHandle(forReadingFrom: url)
+        defer { try? uploadHandle.close() }
+        var offset: Int64 = 0
+        while true {
+            let data = try uploadHandle.read(upToCount: 256 * 1024) ?? Data()
+            if data.isEmpty { break }
+            let receipt = try await post(
+                path: "/v1/action",
+                body: PackageStageChunkBody(
+                    capabilityId: "device.package.stage.chunk",
+                    packageId: packageID,
+                    offset: offset,
+                    data: data.base64EncodedString(),
+                    requestId: UUID().uuidString,
+                    caller: caller,
+                    confirmed: false
+                ),
+                response: ActionReceipt.self,
+                timeout: 15
+            )
+            guard receipt.ok else { throw DaemonError.actionFailed(receipt.message) }
+            offset += Int64(data.count)
+        }
+
+        let commit = try await post(
+            path: "/v1/action",
+            body: PackageIDActionBody(
+                capabilityId: "device.package.stage.commit",
+                packageId: packageID,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: false
+            ),
+            response: ActionReceipt.self,
+            timeout: 30
+        )
+        guard commit.ok else { throw DaemonError.actionFailed(commit.message) }
+        return commit
+    }
+
+    func installPackage(_ package: StagedPackageDescriptor, confirmed: Bool) async throws -> ActionReceipt {
+        let capability = package.format == "deb" ? "device.package.install-deb" : "device.package.install-ipa"
+        return try await post(
+            path: "/v1/action",
+            body: PackageIDActionBody(
+                capabilityId: capability,
+                packageId: package.packageId,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: confirmed
+            ),
+            response: ActionReceipt.self,
+            timeout: 180
+        )
+    }
+
+    func discardPackage(_ package: StagedPackageDescriptor) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/action",
+            body: PackageIDActionBody(
+                capabilityId: "device.package.discard",
+                packageId: package.packageId,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: false
+            ),
+            response: ActionReceipt.self
         )
     }
 

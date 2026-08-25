@@ -33,7 +33,7 @@ fi
 
 SDK="$(xcrun --sdk iphoneos --show-sdk-path)"
 xcrun --sdk iphoneos clang -target arm64-apple-ios16.0 -isysroot "$SDK" -O2 \
-  -I Daemon build/generated/roottools_execd.c Daemon/control_plane.c Daemon/provider_registry.c -lsqlite3 -framework CoreFoundation -o build/daemon/roottools-execd
+  -I Daemon build/generated/roottools_execd.c Daemon/control_plane.c Daemon/provider_registry.c Daemon/package_controller.c -lsqlite3 -lz -framework CoreFoundation -o build/daemon/roottools-execd
 if command -v ldid >/dev/null 2>&1; then
     ldid -S build/daemon/roottools-execd
 else
