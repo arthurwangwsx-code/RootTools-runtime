@@ -50,6 +50,8 @@ Exit criteria and the documented destructive-regression waiver: `docs/phases/p1-
 
 App/process/filesystem/package/permission inspection first, then carefully scoped reversible mutation. Add app containers, entitlements, process metrics, filesystem scope registry, package metadata, and TCC inspection.
 
+v0.16 adds the first structured performance/resource snapshot (uptime, load, VM memory distribution, storage, daemon RSS, process/task counts and Provider readiness) and a product-facing Performance screen. Battery/thermal and per-process historical metrics remain later P2 depth increments.
+
 ### P3 — Jailbreak & Runtime Platform
 
 Normalize Dopamine, Procursus, launchd, Sileo, Frida, ElleKit, TrollStore, SSH, and ZXTouch behind semantic runtime capabilities. Never expose raw Frida/ElleKit scripting as a model-facing primitive.

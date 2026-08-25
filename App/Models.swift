@@ -183,6 +183,50 @@ struct PermissionPolicyStatus: Codable, Equatable {
     var disabledCount: Int
 }
 
+struct PerformanceLoadAverage: Codable, Equatable {
+    var available: Bool
+    var oneMinute: Double
+    var fiveMinute: Double
+    var fifteenMinute: Double
+}
+
+struct PerformanceMemorySnapshot: Codable, Equatable {
+    var available: Bool
+    var totalBytes: UInt64
+    var freeBytes: UInt64
+    var activeBytes: UInt64
+    var inactiveBytes: UInt64
+    var wiredBytes: UInt64
+}
+
+struct PerformanceStorageSnapshot: Codable, Equatable {
+    var rootFreeBytes: UInt64
+    var varFreeBytes: UInt64
+}
+
+struct PerformanceDaemonSnapshot: Codable, Equatable {
+    var pid: Int
+    var residentBytes: UInt64
+}
+
+struct PerformanceProviderSnapshot: Codable, Equatable {
+    var ready: Int
+    var total: Int
+}
+
+struct DevicePerformanceSnapshot: Codable, Equatable {
+    var schemaVersion: Int
+    var uptimeSeconds: UInt64
+    var cpuCount: Int
+    var loadAverage: PerformanceLoadAverage
+    var memory: PerformanceMemorySnapshot
+    var storage: PerformanceStorageSnapshot
+    var daemon: PerformanceDaemonSnapshot
+    var processCount: Int
+    var activeTaskCount: Int
+    var providers: PerformanceProviderSnapshot
+}
+
 struct ProviderDescriptor: Codable, Identifiable, Equatable {
     var id: String
     var title: String
@@ -475,6 +519,7 @@ enum FileScope: String, CaseIterable, Identifiable {
 }
 
 enum ToolKind: String, CaseIterable, Identifiable {
+    case performance
     case runtime
     case uiAutomation
     case providers
@@ -493,6 +538,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
 
     var title: String {
         switch self {
+        case .performance: return "Performance"
         case .runtime: return "Jailbreak Runtime"
         case .uiAutomation: return "UI Automation"
         case .providers: return "Providers"
@@ -511,6 +557,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
 
     var subtitle: String {
         switch self {
+        case .performance: return "Load · memory · uptime · daemon resources"
         case .runtime: return "Dopamine · rootless · helper"
         case .uiAutomation: return "Observe · tap · type · swipe · lock-aware"
         case .providers: return "Dopamine · TrollStore · Frida · UI"
@@ -529,6 +576,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
 
     var symbol: String {
         switch self {
+        case .performance: return "gauge.with.dots.needle.67percent"
         case .runtime: return "lock.open.fill"
         case .uiAutomation: return "hand.tap.fill"
         case .providers: return "point.3.connected.trianglepath.dotted"
@@ -547,6 +595,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
 
     var endpoint: String {
         switch self {
+        case .performance: return "/v1/performance"
         case .runtime: return "/v1/runtime"
         case .uiAutomation: return "/v1/ui/observe"
         case .providers: return "/v1/providers/catalog"

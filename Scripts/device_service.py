@@ -109,6 +109,9 @@ class DeviceServiceClient:
     def status(self) -> dict:
         return self.request("GET", "/v1/status")
 
+    def performance(self) -> dict:
+        return self.request("GET", "/v1/performance")
+
     def hello(self) -> dict:
         return self.request("GET", "/v1/hello")
 
@@ -397,6 +400,7 @@ def build_parser() -> argparse.ArgumentParser:
 
     sub.add_parser("hello")
     sub.add_parser("status")
+    sub.add_parser("performance")
     sub.add_parser("capabilities")
     sub.add_parser("providers")
     sub.add_parser("policy")
@@ -538,6 +542,8 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.hello()
     if args.command == "status":
         return client.status()
+    if args.command == "performance":
+        return client.performance()
     if args.command == "capabilities":
         return client.capabilities()
     if args.command == "providers":

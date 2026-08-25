@@ -151,6 +151,7 @@ def main() -> int:
             assert hello["features"]["namedPrincipals"] is True
             assert hello["features"]["permissionProfiles"] is True
             assert hello["features"]["developerMode"] is True
+            assert hello["features"]["performanceSnapshot"] is True
             assert hello["features"]["durableIdempotency"] is True
             assert hello["features"]["durableTasks"] is True
             assert hello["features"]["semanticUIAutomation"] is True
@@ -233,6 +234,16 @@ def main() -> int:
             assert standard_mode["ok"] is True
             status, policy = request(port, args.admin_token, "GET", "/v1/policy")
             assert status == 200 and policy["mode"] == "standard"
+
+            status, performance = request(port, args.admin_token, "GET", "/v1/performance")
+            assert status == 200
+            assert performance["schemaVersion"] == 1
+            assert performance["cpuCount"] >= 1
+            assert performance["uptimeSeconds"] >= 0
+            assert performance["memory"]["totalBytes"] >= 0
+            assert performance["daemon"]["pid"] > 0
+            assert performance["processCount"] >= 0
+            assert performance["providers"]["total"] >= performance["providers"]["ready"] >= 0
 
             status, principal_catalog = request(port, args.admin_token, "GET", "/v1/principals/catalog")
             assert status == 200

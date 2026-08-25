@@ -227,6 +227,11 @@ final class DaemonClient {
         return try decoder.decode(DeviceStatus.self, from: data)
     }
 
+    func performance() async throws -> DevicePerformanceSnapshot {
+        let data = try await request(path: "/v1/performance")
+        return try decoder.decode(DevicePerformanceSnapshot.self, from: data)
+    }
+
     func text(path: String) async throws -> TextPayload {
         let data = try await request(path: path)
         return try decoder.decode(TextPayload.self, from: data)

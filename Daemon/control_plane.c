@@ -13,6 +13,7 @@
 
 static const RTCapability kCapabilities[] = {
     {"device.status.observe",      NULL,                "Device and daemon health",              RT_RISK_R0, 0, 1, 1},
+    {"device.performance.observe", NULL,                "Performance and resource snapshot",      RT_RISK_R0, 0, 1, 1},
     {"device.runtime.observe",     NULL,                "Jailbreak runtime state",               RT_RISK_R0, 0, 1, 1},
     {"device.runtime.adapters",    NULL,                "Structured runtime adapter state",      RT_RISK_R0, 0, 1, 1},
     {"device.runtime.frida.observe",NULL,               "Frida server and package facts",         RT_RISK_R0, 0, 1, 1},

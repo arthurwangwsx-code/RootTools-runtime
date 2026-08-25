@@ -34,6 +34,7 @@ typedef struct {
 
 static const RTProviderBinding kBindings[] = {
     {"device.status.observe", "roottools.execd"},
+    {"device.performance.observe", "ios.darwin"},
     {"device.runtime.observe", "jailbreak.dopamine"},
     {"device.runtime.adapters", "roottools.execd"},
     {"device.runtime.frida.observe", "runtime.frida"},

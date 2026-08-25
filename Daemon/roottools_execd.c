@@ -7,6 +7,7 @@
 #include <errno.h>
 #include <fcntl.h>
 #include <ifaddrs.h>
+#include <mach/mach.h>
 #include <netinet/in.h>
 #include <signal.h>
 #include <spawn.h>
@@ -36,7 +37,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.15.0"
+#define VERSION "0.16.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -870,6 +871,51 @@ static unsigned long long free_bytes(const char *path) {
     return (unsigned long long)s.f_bavail * (unsigned long long)s.f_bsize;
 }
 
+static unsigned long long uptime_seconds(void) {
+    struct timeval boot={0}; size_t size=sizeof(boot);
+    if(sysctlbyname("kern.boottime",&boot,&size,NULL,0)!=0||boot.tv_sec<=0)return 0;
+    time_t now=time(NULL); return now>boot.tv_sec?(unsigned long long)(now-boot.tv_sec):0;
+}
+
+static int process_count_snapshot(void) {
+    size_t length=0; int mib[4]={CTL_KERN,KERN_PROC,KERN_PROC_ALL,0};
+    if(sysctl(mib,4,NULL,&length,NULL,0)!=0||length==0)return -1;
+    return (int)(length/sizeof(struct kinfo_proc));
+}
+
+typedef struct {
+    int available;
+    unsigned long long free_bytes;
+    unsigned long long active_bytes;
+    unsigned long long inactive_bytes;
+    unsigned long long wired_bytes;
+} RTMemorySnapshot;
+
+static RTMemorySnapshot memory_snapshot(void) {
+    RTMemorySnapshot snapshot={0};
+    mach_port_t host=mach_host_self();
+    vm_size_t page_size=0;
+    vm_statistics64_data_t stats={0};
+    mach_msg_type_number_t count=HOST_VM_INFO64_COUNT;
+    if(host_page_size(host,&page_size)==KERN_SUCCESS&&
+       host_statistics64(host,HOST_VM_INFO64,(host_info64_t)&stats,&count)==KERN_SUCCESS){
+        snapshot.available=1;
+        snapshot.free_bytes=(unsigned long long)stats.free_count*(unsigned long long)page_size;
+        snapshot.active_bytes=(unsigned long long)stats.active_count*(unsigned long long)page_size;
+        snapshot.inactive_bytes=(unsigned long long)stats.inactive_count*(unsigned long long)page_size;
+        snapshot.wired_bytes=(unsigned long long)stats.wire_count*(unsigned long long)page_size;
+    }
+    mach_port_deallocate(mach_task_self(),host);
+    return snapshot;
+}
+
+static unsigned long long daemon_resident_bytes(void) {
+    mach_task_basic_info_data_t info={0};
+    mach_msg_type_number_t count=MACH_TASK_BASIC_INFO_COUNT;
+    if(task_info(mach_task_self(),MACH_TASK_BASIC_INFO,(task_info_t)&info,&count)!=KERN_SUCCESS)return 0;
+    return (unsigned long long)info.resident_size;
+}
+
 static char *processes_text(int *dopamineRunning) {
     size_t length = 0;
     int mib[4] = {CTL_KERN, KERN_PROC, KERN_PROC_ALL, 0};
@@ -1600,6 +1646,38 @@ static void send_network_catalog(int fd) {
     send_response(fd,200,"application/json",response); free(response);
 }
 
+static void send_performance(int fd) {
+    double load[3]={0,0,0};
+    int load_count=getloadavg(load,3);
+    if(load_count<0){load[0]=load[1]=load[2]=0;load_count=0;}
+    RTMemorySnapshot memory=memory_snapshot();
+    int providers_ready=0;
+    size_t provider_total=rt_provider_count();
+    for(size_t i=0;i<provider_total;i++){
+        const RTProvider *provider=rt_provider_at(i);
+        if(provider&&rt_provider_available(provider))providers_ready++;
+    }
+    int process_count=process_count_snapshot();
+    int active_tasks=task_active_count();
+    char response[4096]={0};
+    snprintf(response,sizeof(response),
+        "{\"schemaVersion\":1,\"uptimeSeconds\":%llu,\"cpuCount\":%d,"
+        "\"loadAverage\":{\"available\":%s,\"oneMinute\":%.3f,\"fiveMinute\":%.3f,\"fifteenMinute\":%.3f},"
+        "\"memory\":{\"available\":%s,\"totalBytes\":%llu,\"freeBytes\":%llu,\"activeBytes\":%llu,\"inactiveBytes\":%llu,\"wiredBytes\":%llu},"
+        "\"storage\":{\"rootFreeBytes\":%llu,\"varFreeBytes\":%llu},"
+        "\"daemon\":{\"pid\":%d,\"residentBytes\":%llu},"
+        "\"processCount\":%d,\"activeTaskCount\":%d,"
+        "\"providers\":{\"ready\":%d,\"total\":%zu}}",
+        uptime_seconds(),sysctl_int("hw.ncpu"),
+        load_count>0?"true":"false",load[0],load[1],load[2],
+        memory.available?"true":"false",sysctl_u64("hw.memsize"),memory.free_bytes,memory.active_bytes,memory.inactive_bytes,memory.wired_bytes,
+        free_bytes("/"),free_bytes("/var"),
+        getpid(),daemon_resident_bytes(),
+        process_count<0?0:process_count,active_tasks<0?0:active_tasks,
+        providers_ready,provider_total);
+    send_response(fd,200,"application/json",response);
+}
+
 static void send_runtime_catalog(int fd) {
     int dopamine=0; char *process_snapshot=processes_text(&dopamine); free(process_snapshot);
     int rootless=access("/var/jb",F_OK)==0;
@@ -1806,7 +1884,7 @@ static void send_hello(int fd, RTAuthRole role, const char *caller) {
         "{\"service\":\"roottools.device-service\",\"schemaVersion\":%d,\"daemonVersion\":\"%s\","
         "\"authenticatedRole\":\"%s\",\"authenticatedCaller\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
-        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"permissionProfiles\":true,\"developerMode\":true,\"durableIdempotency\":true,"
+        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"permissionProfiles\":true,\"developerMode\":true,\"performanceSnapshot\":true,\"durableIdempotency\":true,"
         "\"expectedRevision\":true,\"eventAudit\":true,\"durableTasks\":true,\"semanticUIAutomation\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),escaped_caller,machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
@@ -2875,7 +2953,8 @@ static void handle(int fd) {
             (getuid()==0&&access("/var/jb",F_OK)==0)?"true":"false",ui_execution_ready(lock_snapshot)?"true":"false",pending_jobs<0?0:pending_jobs);
         send_response(fd, 200, "application/json", response); free(req); return;
     }
-    if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime")) { if(authorize_read_capability(fd,"device.runtime.observe",caller)) send_text_payload(fd, runtime_text()); }
+    if (!strcmp(method,"GET") && !strcmp(path, "/v1/performance")) { if(authorize_read_capability(fd,"device.performance.observe",caller)) send_performance(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime")) { if(authorize_read_capability(fd,"device.runtime.observe",caller)) send_text_payload(fd, runtime_text()); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/catalog")) { if(authorize_read_capability(fd,"device.runtime.adapters",caller)) send_runtime_catalog(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/frida")) { if(authorize_read_capability(fd,"device.runtime.frida.observe",caller)) send_frida_status(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/ellekit")) { if(authorize_read_capability(fd,"device.runtime.ellekit.observe",caller)) send_ellekit_status(fd); }

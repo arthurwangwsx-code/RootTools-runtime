@@ -199,6 +199,8 @@ struct DeviceHubView: View {
                     }
 
                     HubSection(title: "System", subtitle: "Storage, network and jailbreak runtime") {
+                        NavigationLink(value: ToolKind.performance) { HubRow(tool: .performance) }
+                        Divider().padding(.leading, 54)
                         NavigationLink(value: ToolKind.files) { HubRow(tool: .files) }
                         Divider().padding(.leading, 54)
                         NavigationLink(value: ToolKind.network) { HubRow(tool: .network) }
@@ -514,7 +516,9 @@ private struct RootToolDestination: View {
 
     @ViewBuilder
     var body: some View {
-        if tool == .capabilities {
+        if tool == .performance {
+            PerformanceView()
+        } else if tool == .capabilities {
             CapabilitiesView()
         } else if tool == .providers {
             ProvidersView()

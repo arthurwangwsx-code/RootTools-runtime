@@ -43,6 +43,8 @@ The `v0.14.0` line adds semantic UI automation foundations. Callers use typed `d
 
 The `v0.15.0` line formalizes RootTools permissions into hard policy, Owner policy mode, Principal grants, R2 approval and runtime conditions. Restricted keeps observation plus the policy recovery switch, Standard keeps explicit R2 approval, and Developer enables the full compiled non-R3 Owner surface with local Owner R2 auto-approval. Named principals never inherit Developer Mode.
 
+The `v0.16.0` line adds a structured performance/resource surface: uptime, load average, VM memory distribution, free storage, daemon resident memory, process count, active device tasks and Provider readiness. The Device tab exposes the same snapshot without falling back to shell parsing.
+
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 
 ## Build and install
