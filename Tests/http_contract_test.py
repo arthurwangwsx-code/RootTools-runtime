@@ -101,6 +101,7 @@ def main() -> int:
         bootstrap_scope = temp_path / "bootstrap-files"
         package_root = temp_path / "packages"
         package_db = temp_path / "packages.sqlite3"
+        dpkg_status = temp_path / "dpkg-status"
         update_db = temp_path / "self-update.sqlite3"
         principal_db = temp_path / "principals.sqlite3"
         system_apps_root = temp_path / "system-apps"
@@ -121,6 +122,16 @@ def main() -> int:
                 },
                 stream,
             )
+        dpkg_status.write_text(
+            "Package: com.example.fixture.deb\n"
+            "Status: install ok installed\n"
+            "Priority: optional\n"
+            "Section: utils\n"
+            "Installed-Size: 42\n"
+            "Architecture: iphoneos-arm64\n"
+            "Version: 3.2.1\n"
+            "Description: Fixture Debian package\n\n"
+        )
         port = free_port()
         tcc = sqlite3.connect(tcc_path)
         tcc.execute(
@@ -146,6 +157,7 @@ def main() -> int:
             "ROOTTOOLS_BOOTSTRAP_SCOPE_ROOT": str(bootstrap_scope),
             "ROOTTOOLS_PACKAGE_ROOT": str(package_root),
             "ROOTTOOLS_PACKAGE_DB": str(package_db),
+            "ROOTTOOLS_DPKG_STATUS": str(dpkg_status),
             "ROOTTOOLS_UPDATE_DB": str(update_db),
             "ROOTTOOLS_PRINCIPAL_DB": str(principal_db),
             "ROOTTOOLS_SYSTEM_APPS_ROOT": str(system_apps_root),
@@ -265,6 +277,19 @@ def main() -> int:
             assert performance["daemon"]["pid"] > 0
             assert performance["processCount"] >= 0
             assert performance["providers"]["total"] >= performance["providers"]["ready"] >= 0
+
+            status, installed_packages = request(port, args.agent_token, "GET", "/v1/packages/installed")
+            assert status == 200
+            assert installed_packages["count"] == 1
+            installed_fixture = installed_packages["packages"][0]
+            assert installed_fixture["packageId"] == "com.example.fixture.deb"
+            assert installed_fixture["version"] == "3.2.1"
+            assert installed_fixture["architecture"] == "iphoneos-arm64"
+            assert installed_fixture["source"] == "procursus-dpkg"
+            assert installed_fixture["status"] == "installed"
+            assert installed_fixture["section"] == "utils"
+            assert installed_fixture["installedSizeKB"] == 42
+            assert installed_fixture["essential"] is False
 
             status, principal_catalog = request(port, args.admin_token, "GET", "/v1/principals/catalog")
             assert status == 200

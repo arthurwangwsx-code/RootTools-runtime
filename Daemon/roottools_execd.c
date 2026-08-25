@@ -38,7 +38,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.17.0"
+#define VERSION "0.18.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1867,6 +1867,13 @@ static void send_package_catalog(int fd) {
     free(response);
 }
 
+static void send_installed_package_catalog(int fd) {
+    char *response=rt_installed_packages_json();
+    if(!response){send_error(fd,503,"installed package catalog unavailable");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
+}
+
 static void send_package_history(int fd) {
     char *response=rt_package_history_json();
     if(!response){send_error(fd,503,"package history unavailable");return;}
@@ -3096,6 +3103,7 @@ static void handle(int fd) {
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/providers/catalog")) { if(authorize_read_capability(fd,"device.providers.read",caller)) send_provider_catalog(fd); }
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan",caller)) send_package_plan(fd,body); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/catalog")) { if(authorize_read_capability(fd,"device.package.list",caller)) send_package_catalog(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/installed")) { if(authorize_read_capability(fd,"device.package.list",caller)) send_installed_package_catalog(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/history")) { if(authorize_read_capability(fd,"device.package.history",caller)) send_package_history(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/principals/catalog")) {
         if(auth_role!=RT_AUTH_ADMIN)send_error(fd,403,"principal catalog is owner-only");

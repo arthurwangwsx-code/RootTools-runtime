@@ -346,6 +346,27 @@ struct StagedPackageCatalog: Codable, Equatable {
     var count: Int
 }
 
+struct InstalledPackageDescriptor: Codable, Identifiable, Equatable {
+    var packageId: String
+    var version: String
+    var architecture: String
+    var source: String
+    var status: String
+    var section: String
+    var priority: String
+    var description: String
+    var installedSizeKB: Int64
+    var essential: Bool
+
+    var id: String { packageId }
+}
+
+struct InstalledPackageCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var packages: [InstalledPackageDescriptor]
+    var count: Int
+}
+
 struct PackageHistoryEvent: Codable, Identifiable, Equatable {
     var sequence: Int64
     var packageId: String

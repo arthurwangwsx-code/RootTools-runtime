@@ -49,6 +49,8 @@ The `v0.16.0` line adds a structured performance/resource surface: uptime, load 
 
 The `v0.17.0` line turns Applications and Processes into structured management surfaces. App inventory/inspect now includes display name, version, build, source and bundle path; process inspect adds footprint/resident memory, CPU time, disk I/O, page-ins and wakeups through Darwin `proc_pid_rusage` when available. The Device tab uses product lists/details rather than raw dumps.
 
+The `v0.18.0` line adds a read-only installed-package inventory backed by the rootless Procursus `dpkg` database. `/v1/packages/installed`, the Mac `package-installed` command, and the Packages product screen expose installed package identity, version, architecture, source/status, section, size and essential-package metadata with search/filter UX. This does not widen mutation authority: device-wide installed packages remain observation-only, while uninstall/rollback continue to apply only to RootTools-managed package records.
+
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 
 ## Build and install

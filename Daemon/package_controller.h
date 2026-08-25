@@ -53,6 +53,7 @@ int rt_package_deb_field(const char *package_id, const char *field, char *out, s
 int rt_package_mark_external_install(const char *package_id, const char *action,
                                      const char *provider_id);
 char *rt_packages_json(void);
+char *rt_installed_packages_json(void);
 char *rt_package_history_json(void);
 
 #endif

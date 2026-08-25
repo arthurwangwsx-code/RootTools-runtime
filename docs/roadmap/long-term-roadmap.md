@@ -54,6 +54,8 @@ v0.16 adds the first structured performance/resource snapshot (uptime, load, VM 
 
 v0.17 deepens Device Management with version/build/source/path aware application inventory and best-effort Darwin per-process resource metrics. Applications and Processes now have structured management screens instead of raw engineering dumps.
 
+v0.18 adds device-wide read-only Procursus/dpkg installed-package inventory. The product can search and inspect installed package metadata without converting that visibility into a generic uninstall primitive; package mutation remains limited to RootTools-managed lifecycle records.
+
 ### P3 — Jailbreak & Runtime Platform
 
 Normalize Dopamine, Procursus, launchd, Sileo, Frida, ElleKit, TrollStore, SSH, and ZXTouch behind semantic runtime capabilities. Never expose raw Frida/ElleKit scripting as a model-facing primitive.

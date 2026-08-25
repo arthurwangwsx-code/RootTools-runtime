@@ -18,11 +18,49 @@ static void sha256_hex(const unsigned char *bytes, size_t length, char out[65]) 
 int main(void) {
     char temp[]="/tmp/roottools-packages-XXXXXX";
     assert(mkdtemp(temp)!=NULL);
-    char root[512],db[512];
+    char root[512],db[512],status[512];
     snprintf(root,sizeof(root),"%s/files",temp);
     snprintf(db,sizeof(db),"%s/packages.sqlite3",temp);
+    snprintf(status,sizeof(status),"%s/status",temp);
     assert(setenv("ROOTTOOLS_PACKAGE_ROOT",root,1)==0);
     assert(setenv("ROOTTOOLS_PACKAGE_DB",db,1)==0);
+    assert(setenv("ROOTTOOLS_DPKG_STATUS",status,1)==0);
+    FILE *status_file=fopen(status,"w");
+    assert(status_file!=NULL);
+    fputs(
+        "Package: com.example.alpha\n"
+        "Status: install ok installed\n"
+        "Priority: optional\n"
+        "Section: utils\n"
+        "Installed-Size: 321\n"
+        "Architecture: iphoneos-arm64\n"
+        "Version: 1.2.3\n"
+        "Description: Alpha utility\n\n"
+        "Package: com.example.removed\n"
+        "Status: deinstall ok config-files\n"
+        "Architecture: iphoneos-arm64\n"
+        "Version: 9.9\n\n"
+        "Package: com.example.essential\n"
+        "Status: install ok installed\n"
+        "Essential: yes\n"
+        "Architecture: iphoneos-arm64\n"
+        "Version: 4.5.6\n"
+        "Description: Essential package\n",
+        status_file);
+    fclose(status_file);
+
+    char *installed=rt_installed_packages_json();
+    assert(installed!=NULL);
+    assert(strstr(installed,"\"count\":2")!=NULL);
+    assert(strstr(installed,"com.example.alpha")!=NULL);
+    assert(strstr(installed,"\"version\":\"1.2.3\"")!=NULL);
+    assert(strstr(installed,"\"source\":\"procursus-dpkg\"")!=NULL);
+    assert(strstr(installed,"\"status\":\"installed\"")!=NULL);
+    assert(strstr(installed,"\"installedSizeKB\":321")!=NULL);
+    assert(strstr(installed,"com.example.removed")==NULL);
+    assert(strstr(installed,"com.example.essential")!=NULL);
+    assert(strstr(installed,"\"essential\":true")!=NULL);
+    free(installed);
 
     const unsigned char payload[]="RootTools staged package bytes";
     const size_t length=sizeof(payload)-1;

@@ -275,6 +275,11 @@ final class DaemonClient {
         return try decoder.decode(StagedPackageCatalog.self, from: data)
     }
 
+    func installedPackageCatalog() async throws -> InstalledPackageCatalog {
+        let data = try await request(path: "/v1/packages/installed")
+        return try decoder.decode(InstalledPackageCatalog.self, from: data)
+    }
+
     func packageHistory() async throws -> PackageHistoryPayload {
         let data = try await request(path: "/v1/packages/history")
         return try decoder.decode(PackageHistoryPayload.self, from: data)

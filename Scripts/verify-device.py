@@ -114,7 +114,7 @@ def run_regression(
     full: bool,
 ) -> None:
     status = client.status()
-    require(status.get("daemonVersion") == "0.17.0", f"expected daemon 0.17.0, got {status}")
+    require(status.get("daemonVersion") == "0.18.0", f"expected daemon 0.18.0, got {status}")
     require(status.get("uid") == 0, f"daemon must be UID 0: {status}")
     require(status.get("jailbreakRootless") is True, f"rootless bootstrap is unavailable: {status}")
     step("daemon identity", f"v{status['daemonVersion']} uid={status['uid']}")
@@ -189,6 +189,13 @@ def run_regression(
     package_catalog = client.packages()
     require(package_catalog.get("schemaVersion") == 1, f"package catalog unavailable: {package_catalog}")
     step("package controller", f"{package_catalog.get('count', 0)} staged package records")
+    installed_packages = client.installed_packages()
+    require(installed_packages.get("schemaVersion") == 1, f"installed package inventory unavailable: {installed_packages}")
+    require(
+        all(item.get("status") == "installed" and item.get("source") == "procursus-dpkg" for item in installed_packages.get("packages", [])),
+        f"unexpected installed package projection: {installed_packages}",
+    )
+    step("installed package inventory", f"{installed_packages.get('count', 0)} Procursus/dpkg packages")
     update_status = client.self_update_status()
     require(update_status.get("schemaVersion") == 1, f"self-update status unavailable: {update_status}")
     step("self updater", f"{update_status.get('count', 0)} recorded update requests")
@@ -348,7 +355,7 @@ def run_regression(
     step("UI / daemon isolation", f"terminated UI pid={ui_pid} uid={ui_uid}")
 
     still_alive = client.status()
-    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.17.0", "daemon died with UI")
+    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.18.0", "daemon died with UI")
     step("daemon survives UI exit", "Device Service still responds")
 
     legacy = client.request(

@@ -106,6 +106,18 @@ RootTools keeps verified package artifacts after a successful install. When a ne
 
 Uninstall intentionally applies only to a RootTools package record in `installed` state. RootTools does not expose a generic device-wide uninstall-by-identifier primitive.
 
+## Installed package inventory (v0.18)
+
+`GET /v1/packages/installed` is a separate read-only projection of the rootless Procursus `dpkg` database at `/var/jb/Library/dpkg/status`.
+
+- only records whose Debian status is exactly `install ok installed` are returned;
+- metadata includes package ID, version, architecture, section, priority, first-line description, installed size and the `Essential` flag;
+- `source=procursus-dpkg` and `status=installed` make the product provenance explicit;
+- the endpoint reuses the existing R0 `device.package.list` capability;
+- test builds may redirect only the inventory source through `ROOTTOOLS_DPKG_STATUS`.
+
+Inventory visibility does not create mutation authority. A package discovered here is not implicitly a RootTools-managed package, and there is no device-wide uninstall-by-package-ID capability. Existing uninstall/rollback actions continue to require a RootTools lifecycle record produced by verified staging/install.
+
 ## Host workflow
 
 `Scripts/device_service.py` provides the ADB-like typed client:
@@ -113,6 +125,7 @@ Uninstall intentionally applies only to a RootTools package record in `installed
 ```text
 package-stage <file> [--identifier ...]
 package-list
+package-installed
 package-history
 package-install <packageId> --confirm
 package-uninstall <packageId> --confirm
@@ -146,6 +159,7 @@ The Packages screen uses the system file importer. It:
 - allows R2 rollback for a retained verified artifact;
 - shows recent package lifecycle history;
 - supports discard for non-installed staged records.
+- shows a searchable/filterable read-only Procursus/dpkg installed-package inventory with source/status and essential-package metadata.
 
 `RootTools.app` remains UID 501. Package installation remains in the UID 0 daemon.
 

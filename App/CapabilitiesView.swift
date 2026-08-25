@@ -357,17 +357,41 @@ struct ProvidersView: View {
     }
 }
 
+private enum InstalledPackageFilter: String, CaseIterable, Identifiable {
+    case all = "All"
+    case essential = "Essential"
+
+    var id: String { rawValue }
+}
+
 struct PackagesView: View {
     @State private var packages: [StagedPackageDescriptor] = []
+    @State private var installedPackages: [InstalledPackageDescriptor] = []
     @State private var history: [PackageHistoryEvent] = []
     @State private var selfUpdates: [SelfUpdateDescriptor] = []
     @State private var importing = false
     @State private var running = false
     @State private var message = "Stage a DEB, IPA, or TIPA into the RootTools-owned package store."
+    @State private var installedInventoryError: String?
+    @State private var installedSearch = ""
+    @State private var installedFilter: InstalledPackageFilter = .all
     @State private var pendingInstall: StagedPackageDescriptor?
     @State private var pendingUninstall: StagedPackageDescriptor?
     @State private var pendingRollback: StagedPackageDescriptor?
     @State private var pendingSelfUpdate: StagedPackageDescriptor?
+
+    private var visibleInstalledPackages: [InstalledPackageDescriptor] {
+        installedPackages.filter { package in
+            let filterMatches = installedFilter == .all || package.essential
+            guard filterMatches else { return false }
+            let query = installedSearch.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !query.isEmpty else { return true }
+            return package.packageId.localizedCaseInsensitiveContains(query)
+                || package.description.localizedCaseInsensitiveContains(query)
+                || package.section.localizedCaseInsensitiveContains(query)
+                || package.version.localizedCaseInsensitiveContains(query)
+        }
+    }
 
     var body: some View {
         List {
@@ -398,6 +422,45 @@ struct PackagesView: View {
                 ForEach(packages) { package in
                     packageRow(package)
                 }
+            }
+
+            Section {
+                Picker("Installed filter", selection: $installedFilter) {
+                    ForEach(InstalledPackageFilter.allCases) { filter in
+                        Text(filter.rawValue).tag(filter)
+                    }
+                }
+                .pickerStyle(.segmented)
+
+                if let installedInventoryError {
+                    VStack(alignment: .leading, spacing: 4) {
+                        Text("Installed package inventory unavailable")
+                            .font(.subheadline.weight(.semibold))
+                        Text(installedInventoryError)
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
+                            .textSelection(.enabled)
+                    }
+                } else if visibleInstalledPackages.isEmpty {
+                    Text(installedSearch.isEmpty ? "No installed packages match this filter" : "No installed packages match your search")
+                        .foregroundStyle(.secondary)
+                } else {
+                    ForEach(visibleInstalledPackages) { package in
+                        installedPackageRow(package)
+                    }
+                }
+            } header: {
+                HStack {
+                    Text("Installed on device")
+                    Spacer()
+                    if installedInventoryError == nil {
+                        Text("\(installedPackages.count)")
+                            .font(.caption.monospacedDigit())
+                            .foregroundStyle(.secondary)
+                    }
+                }
+            } footer: {
+                Text("Read-only inventory from the rootless Procursus/dpkg database. Seeing a package here does not make it RootTools-managed and does not authorize device-wide uninstall or mutation.")
             }
 
             if !history.isEmpty {
@@ -438,6 +501,7 @@ struct PackagesView: View {
         }
         .navigationTitle("Packages")
         .navigationBarTitleDisplayMode(.inline)
+        .searchable(text: $installedSearch, prompt: "Search installed packages")
         .task { await refresh() }
         .refreshable { await refresh() }
         .fileImporter(
@@ -578,6 +642,54 @@ struct PackagesView: View {
         .padding(.vertical, 4)
     }
 
+    @ViewBuilder
+    private func installedPackageRow(_ package: InstalledPackageDescriptor) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(alignment: .firstTextBaseline) {
+                Text(package.packageId)
+                    .font(.subheadline.weight(.semibold))
+                    .textSelection(.enabled)
+                Spacer()
+                if package.essential {
+                    Text("ESSENTIAL")
+                        .font(.system(size: 9, weight: .bold, design: .rounded))
+                        .padding(.horizontal, 6).padding(.vertical, 3)
+                        .background(Color.primary.opacity(0.07), in: Capsule())
+                }
+            }
+
+            HStack(spacing: 6) {
+                packageBadge(package.source == "procursus-dpkg" ? "PROCURSUS · DPKG" : package.source.uppercased())
+                packageBadge(package.status.uppercased())
+                if !package.section.isEmpty { packageBadge(package.section.uppercased()) }
+            }
+
+            Text([package.version, package.architecture].filter { !$0.isEmpty }.joined(separator: " · "))
+                .font(.caption.monospaced())
+                .foregroundStyle(.secondary)
+
+            if package.installedSizeKB > 0 {
+                Text("Installed size · \(ByteCountFormatter.string(fromByteCount: package.installedSizeKB * 1024, countStyle: .file))")
+                    .font(.caption2)
+                    .foregroundStyle(.tertiary)
+            }
+            if !package.description.isEmpty {
+                Text(package.description)
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .lineLimit(2)
+            }
+        }
+        .padding(.vertical, 4)
+    }
+
+    private func packageBadge(_ text: String) -> some View {
+        Text(text)
+            .font(.system(size: 9, weight: .bold, design: .rounded))
+            .padding(.horizontal, 6).padding(.vertical, 3)
+            .background(Color.primary.opacity(0.07), in: Capsule())
+    }
+
     @MainActor
     private func refresh() async {
         do {
@@ -587,6 +699,14 @@ struct PackagesView: View {
             packages = try await catalog.packages
             history = (try? await historyPayload.events) ?? []
             selfUpdates = (try? await updatePayload.updates) ?? []
+            do {
+                let installedCatalog = try await DaemonClient.shared.installedPackageCatalog()
+                installedPackages = installedCatalog.packages
+                installedInventoryError = nil
+            } catch {
+                installedPackages = []
+                installedInventoryError = error.localizedDescription
+            }
         } catch {
             message = error.localizedDescription
         }

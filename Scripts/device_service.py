@@ -133,6 +133,9 @@ class DeviceServiceClient:
     def packages(self) -> dict:
         return self.request("GET", "/v1/packages/catalog")
 
+    def installed_packages(self) -> dict:
+        return self.request("GET", "/v1/packages/installed")
+
     def package_history(self) -> dict:
         return self.request("GET", "/v1/packages/history")
 
@@ -434,6 +437,7 @@ def build_parser() -> argparse.ArgumentParser:
     package_plan = sub.add_parser("package-plan")
     package_plan.add_argument("format", choices=("deb", "ipa", "tipa"))
     sub.add_parser("package-list")
+    sub.add_parser("package-installed", help="Read the device-wide Procursus/dpkg installed package inventory")
     sub.add_parser("package-history")
     sub.add_parser("self-update-status")
     package_stage = sub.add_parser("package-stage")
@@ -570,6 +574,8 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.package_plan(args.format)
     if args.command == "package-list":
         return client.packages()
+    if args.command == "package-installed":
+        return client.installed_packages()
     if args.command == "package-history":
         return client.package_history()
     if args.command == "self-update-status":

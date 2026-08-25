@@ -915,6 +915,101 @@ static void json_escape_small(const char *src, char *dst, size_t cap) {
     dst[j]=0;
 }
 
+static const char *installed_status_path(void) {
+    const char *override=getenv("ROOTTOOLS_DPKG_STATUS");
+    return override&&override[0]?override:"/var/jb/Library/dpkg/status";
+}
+
+static void trim_control_value(char *value) {
+    if(!value)return;
+    size_t length=strlen(value);
+    while(length&&isspace((unsigned char)value[length-1]))value[--length]=0;
+    size_t start=0;
+    while(value[start]&&isspace((unsigned char)value[start]))start++;
+    if(start)memmove(value,value+start,strlen(value+start)+1);
+}
+
+typedef struct {
+    char package_id[256];
+    char version[256];
+    char architecture[128];
+    char status[256];
+    char section[128];
+    char priority[128];
+    char description[512];
+    long long installed_size_kb;
+    int essential;
+} RTInstalledPackageFact;
+
+static void clear_installed_fact(RTInstalledPackageFact *fact) {
+    memset(fact,0,sizeof(*fact));
+}
+
+static int installed_fact_ready(const RTInstalledPackageFact *fact) {
+    return fact->package_id[0]&&fact->version[0]&&!strcmp(fact->status,"install ok installed");
+}
+
+static int append_installed_package(char *out,size_t cap,size_t *used,int row,const RTInstalledPackageFact *fact) {
+    if(!installed_fact_ready(fact))return 1;
+    char package_id[512]={0},version[512]={0},architecture[256]={0},section[256]={0},priority[256]={0},description[1024]={0};
+    json_escape_small(fact->package_id,package_id,sizeof(package_id));
+    json_escape_small(fact->version,version,sizeof(version));
+    json_escape_small(fact->architecture,architecture,sizeof(architecture));
+    json_escape_small(fact->section,section,sizeof(section));
+    json_escape_small(fact->priority,priority,sizeof(priority));
+    json_escape_small(fact->description,description,sizeof(description));
+    int n=snprintf(out+*used,cap-*used,
+        "%s{\"packageId\":\"%s\",\"version\":\"%s\",\"architecture\":\"%s\",\"source\":\"procursus-dpkg\",\"status\":\"installed\",\"section\":\"%s\",\"priority\":\"%s\","
+        "\"description\":\"%s\",\"installedSizeKB\":%lld,\"essential\":%s}",
+        row?",":"",package_id,version,architecture,section,priority,description,fact->installed_size_kb,fact->essential?"true":"false");
+    if(n<0||(size_t)n>=cap-*used)return 0;
+    *used+=(size_t)n;
+    return 1;
+}
+
+char *rt_installed_packages_json(void) {
+    FILE *file=fopen(installed_status_path(),"r");
+    if(!file)return NULL;
+    size_t cap=262144;
+    char *out=calloc(1,cap);
+    if(!out){fclose(file);return NULL;}
+    size_t used=(size_t)snprintf(out,cap,"{\"schemaVersion\":1,\"packages\":[");
+    int rows=0;
+    char line[4096];
+    RTInstalledPackageFact fact;clear_installed_fact(&fact);
+    while(fgets(line,sizeof(line),file)){
+        if(line[0]=='\n'||line[0]=='\r'){
+            if(installed_fact_ready(&fact)){
+                if(rows>=1024||!append_installed_package(out,cap,&used,rows,&fact))break;
+                rows++;
+            }
+            clear_installed_fact(&fact);
+            continue;
+        }
+        // Continuation lines belong to Description; the first summary line is
+        // sufficient for inventory and keeps the endpoint bounded.
+        if(line[0]==' '||line[0]=='\t')continue;
+        char *colon=strchr(line,':');if(!colon)continue;*colon=0;
+        char *value=colon+1;trim_control_value(line);trim_control_value(value);
+        if(!strcmp(line,"Package"))snprintf(fact.package_id,sizeof(fact.package_id),"%s",value);
+        else if(!strcmp(line,"Version"))snprintf(fact.version,sizeof(fact.version),"%s",value);
+        else if(!strcmp(line,"Architecture"))snprintf(fact.architecture,sizeof(fact.architecture),"%s",value);
+        else if(!strcmp(line,"Status"))snprintf(fact.status,sizeof(fact.status),"%s",value);
+        else if(!strcmp(line,"Section"))snprintf(fact.section,sizeof(fact.section),"%s",value);
+        else if(!strcmp(line,"Priority"))snprintf(fact.priority,sizeof(fact.priority),"%s",value);
+        else if(!strcmp(line,"Description"))snprintf(fact.description,sizeof(fact.description),"%s",value);
+        else if(!strcmp(line,"Installed-Size"))fact.installed_size_kb=strtoll(value,NULL,10);
+        else if(!strcmp(line,"Essential"))fact.essential=!strcasecmp(value,"yes");
+    }
+    if(installed_fact_ready(&fact)&&rows<1024){
+        if(append_installed_package(out,cap,&used,rows,&fact))rows++;
+    }
+    fclose(file);
+    int n=snprintf(out+used,cap-used,"],\"count\":%d}",rows);
+    if(n<0||(size_t)n>=cap-used){free(out);return NULL;}
+    return out;
+}
+
 char *rt_packages_json(void) {
     sqlite3 *db=NULL;
     if(!db_open(&db))return NULL;
