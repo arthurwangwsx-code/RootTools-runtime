@@ -17,6 +17,8 @@ int main(void) {
     assert(!strcmp(rt_provider_for_capability("device.self-update.schedule"), "roottools.updater"));
     assert(!strcmp(rt_provider_for_capability("device.runtime.frida.observe"), "runtime.frida"));
     assert(!strcmp(rt_provider_for_capability("device.runtime.ellekit.observe"), "runtime.ellekit"));
+    assert(!strcmp(rt_provider_for_capability("device.task.submit-app-launch"), "roottools.execd"));
+    assert(!strcmp(rt_provider_for_capability("device.task.cancel"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.principal.list"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.principal.create"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.principal.revoke"), "roottools.execd"));

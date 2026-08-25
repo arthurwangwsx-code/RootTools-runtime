@@ -98,6 +98,30 @@ struct AutomationQueuePayload: Codable, Equatable {
     var count: Int
 }
 
+struct DeviceTaskDescriptor: Codable, Identifiable, Equatable {
+    var taskId: String
+    var capabilityId: String
+    var kind: String
+    var target: String
+    var caller: String
+    var state: String
+    var requiresUI: Bool
+    var attemptCount: Int
+    var createdAt: Int64
+    var updatedAt: Int64
+    var result: String?
+    var error: String?
+
+    var id: String { taskId }
+    var cancellable: Bool { ["queued", "waiting_for_unlock", "retrying"].contains(state) }
+}
+
+struct DeviceTaskCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var tasks: [DeviceTaskDescriptor]
+    var count: Int
+}
+
 struct TextPayload: Codable {
     var ok: Bool
     var output: String

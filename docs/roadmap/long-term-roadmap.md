@@ -74,6 +74,8 @@ v0.10 establishes the canonical Command Gateway, v0.11 adds named command princi
 
 Make the phone a durable execution node with Trigger, Workflow, Step, Run, Retry/Timeout, Result, Rollback, and battery/resource policy.
 
+v0.13 establishes the first canonical Device Task Ledger. It persists caller, capability, UI requirement, attempts and lifecycle state, recovers interrupted `running` tasks after daemon restart, and moves lock-aware app launch to the new task model. Broader task executors reuse this ledger rather than creating parallel queues.
+
 ### P7 — Production 1.0
 
 Reboot/re-jailbreak recovery, crash-loop safe mode, protocol/schema versioning, atomic self-update with rollback, compatibility matrix, and multi-device identity/transport.

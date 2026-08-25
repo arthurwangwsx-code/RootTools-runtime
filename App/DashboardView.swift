@@ -219,8 +219,9 @@ struct DeviceHubView: View {
 struct TasksHubView: View {
     @EnvironmentObject private var store: DeviceStore
     @State private var automation: AutomationState?
-    @State private var jobs: [AutomationJob] = []
+    @State private var tasks: [DeviceTaskDescriptor] = []
     @State private var loadError: String?
+    @State private var cancellingTaskID: String?
 
     var body: some View {
         NavigationStack {
@@ -251,19 +252,38 @@ struct TasksHubView: View {
                         NavigationLink(value: ToolKind.audit) { HubRow(tool: .audit) }
                     }
 
-                    if !jobs.isEmpty {
-                        HubSection(title: "Recent jobs", subtitle: "Persisted device-side automation queue") {
-                            ForEach(Array(jobs.prefix(5).enumerated()), id: \.element.id) { index, job in
+                    if !tasks.isEmpty {
+                        HubSection(title: "Recent tasks", subtitle: "Durable device-side command execution") {
+                            ForEach(Array(tasks.prefix(8).enumerated()), id: \.element.id) { index, task in
                                 if index > 0 { Divider().padding(.leading, 14) }
                                 VStack(alignment: .leading, spacing: 5) {
                                     HStack {
-                                        Text(job.kind).font(.subheadline.weight(.semibold))
+                                        Text(task.kind).font(.subheadline.weight(.semibold))
                                         Spacer()
-                                        Text(job.state.uppercased())
+                                        Text(task.state.replacingOccurrences(of: "_", with: " ").uppercased())
                                             .font(.caption2.weight(.bold))
-                                            .foregroundStyle(job.state == "failed" ? Color.red : Color.secondary)
+                                            .foregroundStyle(task.state == "failed" ? Color.red : task.state == "completed" ? Color.green : Color.secondary)
                                     }
-                                    Text(job.target).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    Text(task.target).font(.caption).foregroundStyle(.secondary).lineLimit(1)
+                                    HStack(spacing: 8) {
+                                        Text(task.caller)
+                                            .font(.caption2.monospaced())
+                                            .foregroundStyle(.tertiary)
+                                            .lineLimit(1)
+                                        if task.requiresUI {
+                                            Label("UI", systemImage: "iphone")
+                                                .font(.caption2)
+                                                .foregroundStyle(.tertiary)
+                                        }
+                                        Spacer()
+                                        if task.cancellable {
+                                            Button("Cancel", role: .destructive) {
+                                                Task { await cancel(task) }
+                                            }
+                                            .font(.caption)
+                                            .disabled(cancellingTaskID != nil)
+                                        }
+                                    }
                                 }
                                 .padding(.vertical, 8)
                             }
@@ -302,11 +322,25 @@ struct TasksHubView: View {
     @MainActor
     private func refresh() async {
         async let state = try? DaemonClient.shared.automationState()
-        async let queue = try? DaemonClient.shared.automationQueue()
-        let (loadedState, loadedQueue) = await (state, queue)
+        async let catalog = try? DaemonClient.shared.taskCatalog()
+        let (loadedState, loadedCatalog) = await (state, catalog)
         automation = loadedState
-        jobs = loadedQueue?.jobs ?? []
+        tasks = loadedCatalog?.tasks ?? []
         loadError = loadedState == nil ? "Automation state is currently unavailable." : nil
+    }
+
+    @MainActor
+    private func cancel(_ task: DeviceTaskDescriptor) async {
+        guard cancellingTaskID == nil else { return }
+        cancellingTaskID = task.taskId
+        defer { cancellingTaskID = nil }
+        do {
+            let receipt = try await DaemonClient.shared.cancelAutomation(jobID: task.taskId)
+            if !receipt.ok { loadError = receipt.message }
+            await refresh()
+        } catch {
+            loadError = error.localizedDescription
+        }
     }
 }
 

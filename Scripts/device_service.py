@@ -151,6 +151,9 @@ class DeviceServiceClient:
     def automation_queue(self) -> dict:
         return self.request("GET", "/v1/automation/queue")
 
+    def tasks(self) -> dict:
+        return self.request("GET", "/v1/tasks/catalog")
+
     def app_inspect(self, bundle_id: str) -> dict:
         return self.request("POST", "/v1/inspect/app", {"bundleID": bundle_id})
 
@@ -430,6 +433,11 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("lock-state")
     sub.add_parser("automation-state")
     sub.add_parser("automation-queue")
+    sub.add_parser("task-list")
+    task_launch = sub.add_parser("task-app-launch", help="Submit a durable app launch task")
+    task_launch.add_argument("bundle_id")
+    task_cancel = sub.add_parser("task-cancel", help="Cancel one queued/waiting/retrying task")
+    task_cancel.add_argument("task_id")
     sub.add_parser("fs-scopes")
     fs_list = sub.add_parser("fs-list")
     fs_list.add_argument("scope", choices=("mobile", "bootstrap"))
@@ -535,6 +543,12 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.automation_state()
     if args.command == "automation-queue":
         return client.automation_queue()
+    if args.command == "task-list":
+        return client.tasks()
+    if args.command == "task-app-launch":
+        return client.action("device.task.submit-app-launch", {"bundleID": args.bundle_id}, request_id=args.request_id, expected_revision=args.expected_revision)
+    if args.command == "task-cancel":
+        return client.action("device.task.cancel", {"taskId": args.task_id}, request_id=args.request_id, expected_revision=args.expected_revision)
     if args.command == "fs-scopes":
         return client.fs_scopes()
     if args.command == "fs-list":
@@ -570,9 +584,9 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
     if args.command == "app-launch":
         return client.action("device.app.launch", {"bundleID": args.bundle_id}, request_id=args.request_id, expected_revision=args.expected_revision)
     if args.command == "queue-app-launch":
-        return client.action("device.automation.queue-app-launch", {"bundleID": args.bundle_id}, request_id=args.request_id, expected_revision=args.expected_revision)
+        return client.action("device.task.submit-app-launch", {"bundleID": args.bundle_id}, request_id=args.request_id, expected_revision=args.expected_revision)
     if args.command == "automation-cancel":
-        return client.action("device.automation.cancel", {"jobID": args.job_id}, request_id=args.request_id, expected_revision=args.expected_revision)
+        return client.action("device.task.cancel", {"taskId": args.job_id}, request_id=args.request_id, expected_revision=args.expected_revision)
     if args.command == "app-terminate":
         return client.action("device.app.terminate", {"bundleID": args.bundle_id}, request_id=args.request_id, expected_revision=args.expected_revision)
     if args.command == "process-terminate":

@@ -36,7 +36,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.12.0"
+#define VERSION "0.13.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -150,6 +150,25 @@ static int ledger_open(sqlite3 **db_out) {
         "error TEXT"
         ");"
         "CREATE INDEX IF NOT EXISTS automation_jobs_state_idx ON automation_jobs(state,created_at);"
+        "CREATE TABLE IF NOT EXISTS device_tasks("
+        "task_id TEXT PRIMARY KEY,"
+        "capability_id TEXT NOT NULL,"
+        "kind TEXT NOT NULL,"
+        "target TEXT NOT NULL,"
+        "caller TEXT NOT NULL,"
+        "state TEXT NOT NULL,"
+        "requires_ui INTEGER NOT NULL DEFAULT 0,"
+        "attempt_count INTEGER NOT NULL DEFAULT 0,"
+        "created_at INTEGER NOT NULL,"
+        "updated_at INTEGER NOT NULL,"
+        "result TEXT,"
+        "error TEXT"
+        ");"
+        "CREATE INDEX IF NOT EXISTS device_tasks_state_idx ON device_tasks(state,created_at);"
+        "CREATE INDEX IF NOT EXISTS device_tasks_caller_idx ON device_tasks(caller,created_at);"
+        "INSERT OR IGNORE INTO device_tasks(task_id,capability_id,kind,target,caller,state,requires_ui,attempt_count,created_at,updated_at,result,error) "
+        "SELECT job_id,'device.app.launch',kind,target,'legacy:automation',"
+        "CASE state WHEN 'pending' THEN 'queued' ELSE state END,1,attempt_count,created_at,updated_at,result,error FROM automation_jobs;"
         "INSERT OR IGNORE INTO service_meta(key,value) VALUES('revision',0);";
     char *error=NULL;
     rc=sqlite3_exec(db,schema,NULL,NULL,&error);
@@ -363,19 +382,6 @@ static int ledger_increment_revision(unsigned long long *revision_out) {
     sqlite3_close(db); *revision_out=(unsigned long long)value; return 1;
 }
 
-static int automation_job_count(const char *state) {
-    sqlite3 *db=NULL; if(!ledger_open(&db))return -1;
-    sqlite3_stmt *statement=NULL;
-    int rc=sqlite3_prepare_v2(db,
-        state?"SELECT COUNT(*) FROM automation_jobs WHERE state=?1":"SELECT COUNT(*) FROM automation_jobs",
-        -1,&statement,NULL);
-    if(rc!=SQLITE_OK){sqlite3_close(db);return -1;}
-    if(state)sqlite3_bind_text(statement,1,state,-1,SQLITE_TRANSIENT);
-    rc=sqlite3_step(statement); int count=-1;
-    if(rc==SQLITE_ROW)count=sqlite3_column_int(statement,0);
-    sqlite3_finalize(statement); sqlite3_close(db); return count;
-}
-
 static int automation_enqueue_app_launch(const char *job_id, const char *bundle_id) {
     sqlite3 *db=NULL; if(!ledger_open(&db))return 0;
     sqlite3_stmt *statement=NULL;
@@ -392,16 +398,6 @@ static int automation_enqueue_app_launch(const char *job_id, const char *bundle_
     sqlite3_finalize(statement); sqlite3_close(db); return rc==SQLITE_DONE;
 }
 
-static int automation_job_state(const char *job_id, char *state, size_t state_cap) {
-    sqlite3 *db=NULL; if(!ledger_open(&db))return 0;
-    sqlite3_stmt *statement=NULL;
-    int rc=sqlite3_prepare_v2(db,"SELECT state FROM automation_jobs WHERE job_id=?1",-1,&statement,NULL);
-    if(rc==SQLITE_OK){sqlite3_bind_text(statement,1,job_id,-1,SQLITE_TRANSIENT);rc=sqlite3_step(statement);}
-    int ok=0;
-    if(rc==SQLITE_ROW){const char *value=(const char*)sqlite3_column_text(statement,0);if(value){snprintf(state,state_cap,"%s",value);ok=1;}}
-    sqlite3_finalize(statement); sqlite3_close(db); return ok;
-}
-
 static int automation_cancel_pending(const char *job_id) {
     sqlite3 *db=NULL; if(!ledger_open(&db))return 0;
     sqlite3_stmt *statement=NULL;
@@ -415,6 +411,128 @@ static int automation_cancel_pending(const char *job_id) {
     }
     int changed=sqlite3_changes(db); sqlite3_finalize(statement); sqlite3_close(db);
     return rc==SQLITE_DONE&&changed==1;
+}
+
+static int task_count_state(const char *state) {
+    sqlite3 *db=NULL; if(!ledger_open(&db))return -1;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        state?"SELECT COUNT(*) FROM device_tasks WHERE state=?1":"SELECT COUNT(*) FROM device_tasks",
+        -1,&statement,NULL);
+    if(rc!=SQLITE_OK){sqlite3_close(db);return -1;}
+    if(state)sqlite3_bind_text(statement,1,state,-1,SQLITE_TRANSIENT);
+    rc=sqlite3_step(statement);int count=-1;
+    if(rc==SQLITE_ROW)count=sqlite3_column_int(statement,0);
+    sqlite3_finalize(statement);sqlite3_close(db);return count;
+}
+
+static int task_active_count(void) {
+    sqlite3 *db=NULL; if(!ledger_open(&db))return -1;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "SELECT COUNT(*) FROM device_tasks WHERE state IN ('queued','waiting_for_unlock','running','retrying')",
+        -1,&statement,NULL);
+    if(rc!=SQLITE_OK){sqlite3_close(db);return -1;}
+    rc=sqlite3_step(statement);int count=-1;
+    if(rc==SQLITE_ROW)count=sqlite3_column_int(statement,0);
+    sqlite3_finalize(statement);sqlite3_close(db);return count;
+}
+
+static int task_enqueue_app_launch(const char *task_id, const char *bundle_id, const char *caller) {
+    sqlite3 *db=NULL;if(!ledger_open(&db))return 0;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "INSERT INTO device_tasks(task_id,capability_id,kind,target,caller,state,requires_ui,attempt_count,created_at,updated_at) "
+        "VALUES(?1,'device.app.launch','app.launch',?2,?3,'queued',1,0,?4,?4)",
+        -1,&statement,NULL);
+    if(rc==SQLITE_OK){
+        sqlite3_bind_text(statement,1,task_id,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement,2,bundle_id,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_text(statement,3,caller,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_int64(statement,4,(sqlite3_int64)time(NULL));
+        rc=sqlite3_step(statement);
+    }
+    sqlite3_finalize(statement);sqlite3_close(db);return rc==SQLITE_DONE;
+}
+
+static int task_state(const char *task_id, char *state, size_t state_cap) {
+    sqlite3 *db=NULL;if(!ledger_open(&db))return 0;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,"SELECT state FROM device_tasks WHERE task_id=?1",-1,&statement,NULL);
+    if(rc==SQLITE_OK){sqlite3_bind_text(statement,1,task_id,-1,SQLITE_TRANSIENT);rc=sqlite3_step(statement);}
+    int ok=0;
+    if(rc==SQLITE_ROW){const char *value=(const char*)sqlite3_column_text(statement,0);if(value){snprintf(state,state_cap,"%s",value);ok=1;}}
+    sqlite3_finalize(statement);sqlite3_close(db);return ok;
+}
+
+static int task_cancel(const char *task_id, const char *caller, int owner) {
+    sqlite3 *db=NULL;if(!ledger_open(&db))return 0;
+    sqlite3_stmt *statement=NULL;
+    const char *sql=owner?
+        "UPDATE device_tasks SET state='cancelled',updated_at=?1,result='cancelled by owner',error=NULL "
+        "WHERE task_id=?2 AND state IN ('queued','waiting_for_unlock','retrying')":
+        "UPDATE device_tasks SET state='cancelled',updated_at=?1,result='cancelled by caller',error=NULL "
+        "WHERE task_id=?2 AND caller=?3 AND state IN ('queued','waiting_for_unlock','retrying')";
+    int rc=sqlite3_prepare_v2(db,sql,-1,&statement,NULL);
+    if(rc==SQLITE_OK){
+        sqlite3_bind_int64(statement,1,(sqlite3_int64)time(NULL));
+        sqlite3_bind_text(statement,2,task_id,-1,SQLITE_TRANSIENT);
+        if(!owner)sqlite3_bind_text(statement,3,caller,-1,SQLITE_TRANSIENT);
+        rc=sqlite3_step(statement);
+    }
+    int changed=sqlite3_changes(db);sqlite3_finalize(statement);sqlite3_close(db);
+    return rc==SQLITE_DONE&&changed==1;
+}
+
+static int task_next(
+    char *task_id,size_t task_cap,char *kind,size_t kind_cap,char *target,size_t target_cap,
+    char *caller,size_t caller_cap,int *attempts,int *requires_ui,char *state,size_t state_cap
+) {
+    sqlite3 *db=NULL;if(!ledger_open(&db))return 0;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "SELECT task_id,kind,target,caller,attempt_count,requires_ui,state FROM device_tasks "
+        "WHERE state IN ('queued','waiting_for_unlock','retrying') ORDER BY created_at LIMIT 1",
+        -1,&statement,NULL);
+    if(rc==SQLITE_OK)rc=sqlite3_step(statement);
+    int ok=0;
+    if(rc==SQLITE_ROW){
+        const char *id=(const char*)sqlite3_column_text(statement,0),*k=(const char*)sqlite3_column_text(statement,1);
+        const char *t=(const char*)sqlite3_column_text(statement,2),*c=(const char*)sqlite3_column_text(statement,3);
+        const char *s=(const char*)sqlite3_column_text(statement,6);
+        if(id&&k&&t&&c&&s&&strlen(id)<task_cap&&strlen(k)<kind_cap&&strlen(t)<target_cap&&strlen(c)<caller_cap&&strlen(s)<state_cap){
+            snprintf(task_id,task_cap,"%s",id);snprintf(kind,kind_cap,"%s",k);snprintf(target,target_cap,"%s",t);
+            snprintf(caller,caller_cap,"%s",c);snprintf(state,state_cap,"%s",s);
+            *attempts=sqlite3_column_int(statement,4);*requires_ui=sqlite3_column_int(statement,5);ok=1;
+        }
+    }
+    sqlite3_finalize(statement);sqlite3_close(db);return ok;
+}
+
+static int task_update(const char *task_id,const char *state,const char *result,const char *error,int increment_attempt) {
+    sqlite3 *db=NULL;if(!ledger_open(&db))return 0;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "UPDATE device_tasks SET state=?1,attempt_count=attempt_count+?2,updated_at=?3,result=?4,error=?5 WHERE task_id=?6",
+        -1,&statement,NULL);
+    if(rc==SQLITE_OK){
+        sqlite3_bind_text(statement,1,state,-1,SQLITE_TRANSIENT);
+        sqlite3_bind_int(statement,2,increment_attempt?1:0);
+        sqlite3_bind_int64(statement,3,(sqlite3_int64)time(NULL));
+        if(result)sqlite3_bind_text(statement,4,result,-1,SQLITE_TRANSIENT);else sqlite3_bind_null(statement,4);
+        if(error)sqlite3_bind_text(statement,5,error,-1,SQLITE_TRANSIENT);else sqlite3_bind_null(statement,5);
+        sqlite3_bind_text(statement,6,task_id,-1,SQLITE_TRANSIENT);
+        rc=sqlite3_step(statement);
+    }
+    int changed=sqlite3_changes(db);sqlite3_finalize(statement);sqlite3_close(db);return rc==SQLITE_DONE&&changed==1;
+}
+
+static void task_recover_incomplete(void) {
+    sqlite3 *db=NULL;if(!ledger_open(&db))return;
+    sqlite3_exec(db,
+        "UPDATE device_tasks SET state='queued',updated_at=strftime('%s','now'),error='recovered after daemon restart' "
+        "WHERE state='running'",NULL,NULL,NULL);
+    sqlite3_close(db);
 }
 
 static char *receipt_mark_replayed(const char *stored) {
@@ -1526,9 +1644,9 @@ static void send_lock_state(int fd) {
 
 static void send_automation_state(int fd) {
     RTLockSnapshot snapshot=device_lock_snapshot();
-    int pending=automation_job_count("pending");
-    int completed=automation_job_count("completed");
-    int failed=automation_job_count("failed");
+    int pending=task_active_count();
+    int completed=task_count_state("completed");
+    int failed=task_count_state("failed");
     int headless=getuid()==0&&access("/var/jb",F_OK)==0;
     char response[3072]={0};
     snprintf(response,sizeof(response),
@@ -1548,8 +1666,8 @@ static void send_automation_queue(int fd) {
     sqlite3 *db=NULL; if(!ledger_open(&db)){send_error(fd,503,"automation queue unavailable");return;}
     sqlite3_stmt *statement=NULL;
     int rc=sqlite3_prepare_v2(db,
-        "SELECT job_id,kind,target,state,attempt_count,created_at,updated_at,result,error "
-        "FROM automation_jobs ORDER BY created_at DESC LIMIT 100",-1,&statement,NULL);
+        "SELECT task_id,kind,target,state,attempt_count,created_at,updated_at,result,error "
+        "FROM device_tasks ORDER BY created_at DESC LIMIT 100",-1,&statement,NULL);
     if(rc!=SQLITE_OK){sqlite3_close(db);send_error(fd,500,"automation queue query failed");return;}
     char *response=calloc(1,49152); if(!response){sqlite3_finalize(statement);sqlite3_close(db);send_error(fd,500,"automation queue allocation failed");return;}
     size_t used=0; int row=0; int n=snprintf(response,49152,"{\"schemaVersion\":1,\"jobs\":[");
@@ -1574,6 +1692,46 @@ static void send_automation_queue(int fd) {
     send_response(fd,200,"application/json",response);free(response);
 }
 
+static void send_task_catalog(int fd, const char *caller, int owner) {
+    sqlite3 *db=NULL;if(!ledger_open(&db)){send_error(fd,503,"task catalog unavailable");return;}
+    sqlite3_stmt *statement=NULL;
+    const char *sql=owner?
+        "SELECT task_id,capability_id,kind,target,caller,state,requires_ui,attempt_count,created_at,updated_at,result,error "
+        "FROM device_tasks ORDER BY created_at DESC LIMIT 200":
+        "SELECT task_id,capability_id,kind,target,caller,state,requires_ui,attempt_count,created_at,updated_at,result,error "
+        "FROM device_tasks WHERE caller=?1 ORDER BY created_at DESC LIMIT 200";
+    int rc=sqlite3_prepare_v2(db,sql,-1,&statement,NULL);
+    if(rc==SQLITE_OK&&!owner)sqlite3_bind_text(statement,1,caller,-1,SQLITE_TRANSIENT);
+    if(rc!=SQLITE_OK){sqlite3_close(db);send_error(fd,500,"task catalog query failed");return;}
+    char *response=calloc(1,98304);
+    if(!response){sqlite3_finalize(statement);sqlite3_close(db);send_error(fd,500,"task catalog allocation failed");return;}
+    size_t used=0;int row=0;int n=snprintf(response,98304,"{\"schemaVersion\":1,\"tasks\":[");
+    if(n<0){free(response);sqlite3_finalize(statement);sqlite3_close(db);send_error(fd,500,"task catalog encoding failed");return;}used=(size_t)n;
+    while((rc=sqlite3_step(statement))==SQLITE_ROW){
+        const char *task=(const char*)sqlite3_column_text(statement,0),*capability=(const char*)sqlite3_column_text(statement,1);
+        const char *kind=(const char*)sqlite3_column_text(statement,2),*target=(const char*)sqlite3_column_text(statement,3);
+        const char *task_caller=(const char*)sqlite3_column_text(statement,4),*state=(const char*)sqlite3_column_text(statement,5);
+        int requires_ui=sqlite3_column_int(statement,6),attempts=sqlite3_column_int(statement,7);
+        sqlite3_int64 created=sqlite3_column_int64(statement,8),updated=sqlite3_column_int64(statement,9);
+        const char *result=(const char*)sqlite3_column_text(statement,10),*error=(const char*)sqlite3_column_text(statement,11);
+        char etask[256]={0},ecap[384]={0},ekind[128]={0},etarget[512]={0},ecaller[256]={0},estate[128]={0},eresult[1024]={0},eerror[1024]={0};
+        json_escape(task?task:"",etask,sizeof(etask));json_escape(capability?capability:"",ecap,sizeof(ecap));
+        json_escape(kind?kind:"",ekind,sizeof(ekind));json_escape(target?target:"",etarget,sizeof(etarget));
+        json_escape(task_caller?task_caller:"",ecaller,sizeof(ecaller));json_escape(state?state:"",estate,sizeof(estate));
+        json_escape(result?result:"",eresult,sizeof(eresult));json_escape(error?error:"",eerror,sizeof(eerror));
+        n=snprintf(response+used,98304-used,
+            "%s{\"taskId\":\"%s\",\"capabilityId\":\"%s\",\"kind\":\"%s\",\"target\":\"%s\",\"caller\":\"%s\",\"state\":\"%s\",\"requiresUI\":%s,\"attemptCount\":%d,\"createdAt\":%lld,\"updatedAt\":%lld,\"result\":%s%s%s,\"error\":%s%s%s}",
+            row?",":"",etask,ecap,ekind,etarget,ecaller,estate,requires_ui?"true":"false",attempts,(long long)created,(long long)updated,
+            result?"\"":"null",result?eresult:"",result?"\"":"",error?"\"":"null",error?eerror:"",error?"\"":"");
+        if(n<0||(size_t)n>=98304-used)break;used+=(size_t)n;row++;
+        if(used>94000)break;
+    }
+    sqlite3_finalize(statement);sqlite3_close(db);
+    n=snprintf(response+used,98304-used,"],\"count\":%d}",row);
+    if(n<0||(size_t)n>=98304-used){free(response);send_error(fd,500,"task catalog response too large");return;}
+    send_response(fd,200,"application/json",response);free(response);
+}
+
 static void send_hello(int fd, RTAuthRole role, const char *caller) {
     char machine[64]={0},osbuild[64]={0};
     sysctl_string("hw.machine",machine,sizeof(machine));
@@ -1587,7 +1745,7 @@ static void send_hello(int fd, RTAuthRole role, const char *caller) {
         "\"authenticatedRole\":\"%s\",\"authenticatedCaller\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
         "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
-        "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
+        "\"expectedRevision\":true,\"eventAudit\":true,\"durableTasks\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),escaped_caller,machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
@@ -2107,62 +2265,52 @@ static void execute_principal_ungrant(const char *body, RTActionExecution *execu
     snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"grant is absent":"grant remains active");
 }
 
-static void execute_queue_app_launch(const char *body, const char *job_id, RTActionExecution *execution) {
+static void execute_queue_app_launch(const char *body, const char *task_id, const char *caller, RTActionExecution *execution) {
     char bundle[256]={0};
     if(!json_get_string(body,"bundleID",bundle,sizeof(bundle))||!safe_bundle_id(bundle)){
         snprintf(execution->target,sizeof(execution->target),"invalid bundleID");
         snprintf(execution->message,sizeof(execution->message),"Invalid bundle identifier"); return;
     }
-    snprintf(execution->target,sizeof(execution->target),"job=%s bundle=%s",job_id,bundle);
+    snprintf(execution->target,sizeof(execution->target),"task=%s bundle=%s",task_id,bundle);
     execution->executed=1;
-    if(!automation_enqueue_app_launch(job_id,bundle)){
-        snprintf(execution->message,sizeof(execution->message),"Deferred app launch could not be persisted");return;
+    if(!task_enqueue_app_launch(task_id,bundle,caller)){
+        snprintf(execution->message,sizeof(execution->message),"Durable app launch task could not be persisted");return;
     }
+    // Keep the legacy queue table as a compatibility mirror while v0.13 clients migrate.
+    (void)automation_enqueue_app_launch(task_id,bundle);
     char state[64]={0};
     execution->post_checked=1;
-    execution->post_passed=automation_job_state(job_id,state,sizeof(state))&&!strcmp(state,"pending");
-    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->post_passed?"job is durable and pending":"job persistence verification failed");
+    execution->post_passed=task_state(task_id,state,sizeof(state))&&!strcmp(state,"queued");
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->post_passed?"task is durable and queued":"task persistence verification failed");
     execution->ok=execution->post_passed;
     snprintf(execution->result,sizeof(execution->result),execution->ok?"queued":"failed");
-    snprintf(execution->message,sizeof(execution->message),execution->ok?"App launch queued until the device UI is unlocked and visible":"Failed to queue app launch");
-    if(execution->ok)execution->output=strdup(job_id);
+    snprintf(execution->message,sizeof(execution->message),execution->ok?"App launch task queued; it waits for an unlocked visible UI when necessary":"Failed to queue app launch task");
+    if(execution->ok)execution->output=strdup(task_id);
 }
 
-static void execute_automation_cancel(const char *body, RTActionExecution *execution) {
-    char job_id[128]={0},state[64]={0};
-    if(!json_get_string(body,"jobID",job_id,sizeof(job_id))||!safe_request_id(job_id)){
-        snprintf(execution->target,sizeof(execution->target),"invalid jobID");
-        snprintf(execution->message,sizeof(execution->message),"Valid jobID is required");return;
+static void execute_automation_cancel(const char *body, const char *caller, int owner, RTActionExecution *execution) {
+    char task_id[128]={0},state[64]={0};
+    if(!json_get_string(body,"taskId",task_id,sizeof(task_id)))
+        (void)json_get_string(body,"jobID",task_id,sizeof(task_id));
+    if(!safe_request_id(task_id)){
+        snprintf(execution->target,sizeof(execution->target),"invalid taskId");
+        snprintf(execution->message,sizeof(execution->message),"Valid taskId is required");return;
     }
-    snprintf(execution->target,sizeof(execution->target),"job=%s",job_id);
-    if(!automation_job_state(job_id,state,sizeof(state))){snprintf(execution->message,sizeof(execution->message),"Automation job not found");return;}
-    if(strcmp(state,"pending")){
+    snprintf(execution->target,sizeof(execution->target),"task=%s",task_id);
+    if(!task_state(task_id,state,sizeof(state))){snprintf(execution->message,sizeof(execution->message),"Device task not found");return;}
+    if(strcmp(state,"queued")&&strcmp(state,"waiting_for_unlock")&&strcmp(state,"retrying")){
         snprintf(execution->result,sizeof(execution->result),"denied");
-        snprintf(execution->message,sizeof(execution->message),"Only pending automation jobs can be cancelled");return;
+        snprintf(execution->message,sizeof(execution->message),"Only queued, waiting or retrying tasks can be cancelled");return;
     }
     execution->executed=1;
-    int cancelled=automation_cancel_pending(job_id);
+    int cancelled=task_cancel(task_id,caller,owner);
+    if(cancelled)(void)automation_cancel_pending(task_id);
     execution->post_checked=1;
-    execution->post_passed=cancelled&&automation_job_state(job_id,state,sizeof(state))&&!strcmp(state,"cancelled");
-    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->post_passed?"job state is cancelled":"job remained active");
+    execution->post_passed=cancelled&&task_state(task_id,state,sizeof(state))&&!strcmp(state,"cancelled");
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->post_passed?"task state is cancelled":"task remained active or caller does not own it");
     execution->ok=execution->post_passed;
     snprintf(execution->result,sizeof(execution->result),execution->ok?"success":"failed");
-    snprintf(execution->message,sizeof(execution->message),execution->ok?"Pending automation job cancelled":"Automation cancellation failed verification");
-}
-
-static int automation_next_pending(char *job_id, size_t job_cap, char *kind, size_t kind_cap, char *target, size_t target_cap, int *attempts) {
-    sqlite3 *db=NULL; if(!ledger_open(&db))return 0;
-    sqlite3_stmt *statement=NULL;
-    int rc=sqlite3_prepare_v2(db,
-        "SELECT job_id,kind,target,attempt_count FROM automation_jobs WHERE state='pending' ORDER BY created_at LIMIT 1",
-        -1,&statement,NULL);
-    if(rc==SQLITE_OK)rc=sqlite3_step(statement);
-    int ok=0;
-    if(rc==SQLITE_ROW){
-        const char *j=(const char*)sqlite3_column_text(statement,0),*k=(const char*)sqlite3_column_text(statement,1),*t=(const char*)sqlite3_column_text(statement,2);
-        if(j&&k&&t){snprintf(job_id,job_cap,"%s",j);snprintf(kind,kind_cap,"%s",k);snprintf(target,target_cap,"%s",t);if(attempts)*attempts=sqlite3_column_int(statement,3);ok=1;}
-    }
-    sqlite3_finalize(statement);sqlite3_close(db);return ok;
+    snprintf(execution->message,sizeof(execution->message),execution->ok?"Device task cancelled":"Task cancellation failed verification");
 }
 
 static int automation_update_job(const char *job_id, const char *state, const char *result, const char *error, int increment_attempt) {
@@ -2189,21 +2337,28 @@ static void automation_recover_incomplete_jobs(void) {
 
 static void automation_tick(void) {
     RTLockSnapshot snapshot=device_lock_snapshot();
-    if(!ui_execution_ready(snapshot))return;
-    char job_id[128]={0},kind[64]={0},target[256]={0};int attempts=0;
-    if(!automation_next_pending(job_id,sizeof(job_id),kind,sizeof(kind),target,sizeof(target),&attempts))return;
-    if(strcmp(kind,"app.launch")){automation_update_job(job_id,"failed",NULL,"unsupported automation job kind",1);return;}
-    if(!safe_bundle_id(target)){automation_update_job(job_id,"failed",NULL,"invalid stored bundle identifier",1);return;}
-    automation_update_job(job_id,"running",NULL,NULL,0);
+    char task_id[128]={0},kind[64]={0},target[256]={0},caller[192]={0},state[64]={0};int attempts=0,requires_ui=0;
+    if(!task_next(task_id,sizeof(task_id),kind,sizeof(kind),target,sizeof(target),caller,sizeof(caller),&attempts,&requires_ui,state,sizeof(state)))return;
+    if(requires_ui&&!ui_execution_ready(snapshot)){
+        if(strcmp(state,"waiting_for_unlock"))task_update(task_id,"waiting_for_unlock",NULL,"waiting for unlocked visible UI",0);
+        return;
+    }
+    if(strcmp(kind,"app.launch")){task_update(task_id,"failed",NULL,"unsupported task kind",1);(void)automation_update_job(task_id,"failed",NULL,"unsupported task kind",1);return;}
+    if(!safe_bundle_id(target)){task_update(task_id,"failed",NULL,"invalid stored bundle identifier",1);(void)automation_update_job(task_id,"failed",NULL,"invalid stored bundle identifier",1);return;}
+    task_update(task_id,"running",NULL,NULL,0);(void)automation_update_job(task_id,"running",NULL,NULL,0);
     char executable[256]={0};
     if(!executable_for_bundle(target,executable,sizeof(executable))){
-        automation_update_job(job_id,attempts+1>=3?"failed":"pending",NULL,"could not resolve app executable",1);return;
+        const char *next=attempts+1>=3?"failed":"retrying";
+        task_update(task_id,next,NULL,"could not resolve app executable",1);
+        (void)automation_update_job(task_id,attempts+1>=3?"failed":"pending",NULL,"could not resolve app executable",1);return;
     }
     char *argv[]={(char*)"uiopen",(char*)"--bundleid",target,NULL};
     int rc=fixed_spawn_wait("/var/jb/usr/bin/uiopen",argv,NULL,0);
     int passed=rc==0&&wait_process_name(executable,1);
-    if(passed){automation_update_job(job_id,"completed","application process observed",NULL,1);return;}
-    automation_update_job(job_id,attempts+1>=3?"failed":"pending",NULL,"launch failed or process was not observed",1);
+    if(passed){task_update(task_id,"completed","application process observed",NULL,1);(void)automation_update_job(task_id,"completed","application process observed",NULL,1);return;}
+    const char *next=attempts+1>=3?"failed":"retrying";
+    task_update(task_id,next,NULL,"launch failed or process was not observed",1);
+    (void)automation_update_job(task_id,attempts+1>=3?"failed":"pending",NULL,"launch failed or process was not observed",1);
 }
 
 static pid_t self_update_child=0;
@@ -2309,8 +2464,10 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"principal.revoke")) execute_principal_revoke(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"principal.grant")) execute_principal_grant(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"principal.ungrant")) execute_principal_ungrant(body,&execution);
-    else if(legacy_action&&!strcmp(legacy_action,"automation.queue-app-launch")) execute_queue_app_launch(body,context.request_id,&execution);
-    else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"automation.queue-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"task.submit-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,context.caller,trusted_confirmation_source,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"task.cancel")) execute_automation_cancel(body,context.caller,trusted_confirmation_source,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.stage.begin")) execute_package_stage_begin(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.stage.chunk")) execute_package_stage_chunk(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.stage.commit")) execute_package_stage_commit(body,&execution);
@@ -2374,7 +2531,7 @@ static void handle(int fd) {
         char machine[64]={0}, osbuild[64]={0}; sysctl_string("hw.machine", machine, sizeof(machine)); sysctl_string("kern.osversion", osbuild, sizeof(osbuild));
         int dopamine = 0; char *proc = processes_text(&dopamine); free(proc);
         RTLockSnapshot lock_snapshot=device_lock_snapshot();
-        int pending_jobs=automation_job_count("pending");
+        int pending_jobs=task_active_count();
         char response[3072];
         snprintf(response, sizeof(response),
             "{\"daemonVersion\":\"%s\",\"uid\":%d,\"machine\":\"%s\",\"osBuild\":\"%s\",\"kernel\":\"%s\",\"cpuCount\":%d,\"memoryBytes\":%llu,\"rootFreeBytes\":%llu,\"varFreeBytes\":%llu,\"jailbreakRootless\":%s,\"dopamineRunning\":%s,\"sshReady\":%s,\"fridaReady\":%s,\"zxTouchReady\":%s,"
@@ -2406,6 +2563,7 @@ static void handle(int fd) {
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe",caller)) send_lock_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe",caller)) send_automation_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/queue")) { if(authorize_read_capability(fd,"device.automation.queue.read",caller)) send_automation_queue(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/tasks/catalog")) { if(authorize_read_capability(fd,"device.task.list",caller)) send_task_catalog(fd,caller,auth_role==RT_AUTH_ADMIN); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/ui/screen-info")) { if(authorize_read_capability(fd,"device.ui.screen-info",caller)) send_ui_screen_info(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/apps")) { if(authorize_read_capability(fd,"device.app.list",caller)) send_text_payload(fd, apps_text()); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/apps/catalog")) { if(authorize_read_capability(fd,"device.app.list",caller)) send_app_catalog(fd); }
@@ -2440,6 +2598,7 @@ int main(void) {
     setenv("PATH","/var/jb/bin:/var/jb/usr/bin:/var/jb/sbin:/var/jb/usr/sbin:/usr/bin:/bin:/usr/sbin:/sbin",1);
     ensure_action_dirs();
     automation_recover_incomplete_jobs();
+    task_recover_incomplete();
     int s = socket(AF_INET, SOCK_STREAM, 0); if (s < 0) return 2;
     fcntl(s,F_SETFD,FD_CLOEXEC);
     int one=1; setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));

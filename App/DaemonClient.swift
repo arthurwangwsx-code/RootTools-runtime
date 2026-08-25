@@ -127,6 +127,14 @@ private struct AutomationCancelBody: Codable {
     var confirmed: Bool
 }
 
+private struct TaskCancelBody: Codable {
+    var capabilityId: String
+    var taskId: String
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
 enum DaemonError: LocalizedError {
     case invalidResponse
     case http(Int, String?)
@@ -418,6 +426,11 @@ final class DaemonClient {
         return try decoder.decode(AutomationQueuePayload.self, from: data)
     }
 
+    func taskCatalog() async throws -> DeviceTaskCatalog {
+        let data = try await request(path: "/v1/tasks/catalog")
+        return try decoder.decode(DeviceTaskCatalog.self, from: data)
+    }
+
     func inspectApp(bundleID: String) async throws -> ApplicationInspection {
         let payload: ApplicationInspectionPayload = try await post(
             path: "/v1/inspect/app",
@@ -540,7 +553,7 @@ final class DaemonClient {
         try await post(
             path: "/v1/commands/submit",
             body: BundleActionBody(
-                capabilityId: "device.automation.queue-app-launch", bundleID: bundleID,
+                capabilityId: "device.task.submit-app-launch", bundleID: bundleID,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
             ),
             response: ActionReceipt.self
@@ -550,8 +563,8 @@ final class DaemonClient {
     func cancelAutomation(jobID: String) async throws -> ActionReceipt {
         try await post(
             path: "/v1/commands/submit",
-            body: AutomationCancelBody(
-                capabilityId: "device.automation.cancel", jobID: jobID,
+            body: TaskCancelBody(
+                capabilityId: "device.task.cancel", taskId: jobID,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
             ),
             response: ActionReceipt.self

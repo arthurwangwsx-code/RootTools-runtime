@@ -150,6 +150,7 @@ def main() -> int:
             assert hello["features"]["commandGateway"] is True
             assert hello["features"]["namedPrincipals"] is True
             assert hello["features"]["durableIdempotency"] is True
+            assert hello["features"]["durableTasks"] is True
             assert hello["features"]["expectedRevision"] is True
             assert hello["features"]["rawPrivilegedShell"] is False
             assert hello["features"]["providerRegistry"] is True
@@ -584,10 +585,11 @@ def main() -> int:
             assert queued["executed"] is True
             assert queued["result"] == "queued"
             queued_job_id = queued["output"]
+            time.sleep(1.1)
             status, queue_payload = request(port, args.agent_token, "GET", "/v1/automation/queue")
             assert status == 200
             queued_row = next(item for item in queue_payload["jobs"] if item["jobId"] == queued_job_id)
-            assert queued_row["state"] == "pending"
+            assert queued_row["state"] == "waiting_for_unlock"
 
             cancelled = action(
                 port,
@@ -601,6 +603,34 @@ def main() -> int:
             assert status == 200
             cancelled_row = next(item for item in queue_after_cancel["jobs"] if item["jobId"] == queued_job_id)
             assert cancelled_row["state"] == "cancelled"
+
+            canonical_task = action(
+                port,
+                args.agent_token,
+                "device.task.submit-app-launch",
+                parameters={"bundleID": "com.apple.Preferences"},
+            )
+            assert canonical_task["ok"] is True
+            task_id = canonical_task["output"]
+            time.sleep(1.1)
+            status, task_catalog = request(port, args.agent_token, "GET", "/v1/tasks/catalog")
+            assert status == 200
+            task_row = next(item for item in task_catalog["tasks"] if item["taskId"] == task_id)
+            assert task_row["capabilityId"] == "device.app.launch"
+            assert task_row["caller"] == "trusted-host-agent"
+            assert task_row["requiresUI"] is True
+            assert task_row["state"] == "waiting_for_unlock"
+
+            cancelled_task = action(
+                port,
+                args.agent_token,
+                "device.task.cancel",
+                parameters={"taskId": task_id},
+            )
+            assert cancelled_task["ok"] is True
+            status, task_catalog = request(port, args.agent_token, "GET", "/v1/tasks/catalog")
+            task_row = next(item for item in task_catalog["tasks"] if item["taskId"] == task_id)
+            assert task_row["state"] == "cancelled"
 
             status, fs_scopes = request(port, args.agent_token, "GET", "/v1/fs/scopes")
             assert status == 200

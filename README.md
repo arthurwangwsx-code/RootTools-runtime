@@ -39,7 +39,7 @@ The `v0.9.0` line adds semantic runtime observation for Frida and ElleKit withou
 
 The `v0.10.0` line starts the product/runtime convergence: RootTools now boots into the stable `Overview / Device / Tasks / Agents / Settings` shell, and `POST /v1/commands/submit` is the canonical typed command ingress while `/v1/action` remains a compatibility adapter. The next increments deepen principal identity/grants and attach AiBox/Network adapters to this gateway rather than adding transport-specific executors.
 
-The `v0.12.0` line adds least-privilege capability grants on top of named command principals. A Mac host, AiBox installation, network Skill or automation workflow still receives an independent daemon-generated credential, but a new principal starts with zero delegated device capabilities. The owner may persist only explicit R0/R1 grants, optionally with expiry. R2 remains a separate owner-confirmed path and R3/raw privileged shell remain unavailable.
+The `v0.13.0` line adds the durable Device Task Runtime. Asynchronous device work now has caller/capability identity and a persisted `queued -> waiting_for_unlock -> running -> retrying/completed/failed/cancelled` lifecycle. The existing automation queue remains a compatibility projection while new UI/host clients use canonical task capabilities and `/v1/tasks/catalog`.
 
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 
