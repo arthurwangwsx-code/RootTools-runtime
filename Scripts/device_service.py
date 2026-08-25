@@ -118,6 +118,9 @@ class DeviceServiceClient:
     def providers(self) -> dict:
         return self.request("GET", "/v1/providers/catalog")
 
+    def principals(self) -> dict:
+        return self.request("GET", "/v1/principals/catalog")
+
     def package_plan(self, package_format: str) -> dict:
         return self.request("POST", "/v1/package/plan", {"format": package_format})
 
@@ -205,10 +208,20 @@ class DeviceServiceClient:
             body["expectedRevision"] = expected_revision
         return self.request(
             "POST",
-            "/v1/action",
+            "/v1/commands/submit",
             body,
             timeout=timeout,
         )
+
+    def create_principal(self, principal_id: str, kind: str, display_name: str, confirmed: bool) -> dict:
+        return self.action(
+            "device.principal.create",
+            {"principalId": principal_id, "kind": kind, "displayName": display_name},
+            confirmed=confirmed,
+        )
+
+    def revoke_principal(self, principal_id: str, confirmed: bool) -> dict:
+        return self.action("device.principal.revoke", {"principalId": principal_id}, confirmed=confirmed)
 
     def stage_package(self, package_path: Path, expected_identifier: str = "") -> dict:
         package_path = package_path.resolve()
@@ -341,6 +354,16 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("status")
     sub.add_parser("capabilities")
     sub.add_parser("providers")
+    sub.add_parser("principal-list", help="Owner/admin only: list named command principals")
+    principal_create = sub.add_parser("principal-create", help="R2 owner action: create a named host/app/skill/automation principal")
+    principal_create.add_argument("principal_id")
+    principal_create.add_argument("kind", choices=("host", "app", "skill", "automation"))
+    principal_create.add_argument("display_name")
+    principal_create.add_argument("--confirm", action="store_true", required=True)
+    principal_create.add_argument("--save-to", type=Path, help="Persist the one-time principal credential locally with mode 0600")
+    principal_revoke = sub.add_parser("principal-revoke", help="R2 owner action: revoke a named command principal")
+    principal_revoke.add_argument("principal_id")
+    principal_revoke.add_argument("--confirm", action="store_true", required=True)
     package_plan = sub.add_parser("package-plan")
     package_plan.add_argument("format", choices=("deb", "ipa", "tipa"))
     sub.add_parser("package-list")
@@ -438,6 +461,12 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.capabilities()
     if args.command == "providers":
         return client.providers()
+    if args.command == "principal-list":
+        return client.principals()
+    if args.command == "principal-create":
+        return client.create_principal(args.principal_id, args.kind, args.display_name, args.confirm)
+    if args.command == "principal-revoke":
+        return client.revoke_principal(args.principal_id, args.confirm)
     if args.command == "package-plan":
         return client.package_plan(args.format)
     if args.command == "package-list":
@@ -542,7 +571,7 @@ def main() -> int:
                 target_udid = None
         with device_proxy(target_udid) as port:
             result = execute(DeviceServiceClient(port, token, args.caller), args)
-        if args.command == "agent-rotate" and args.save_to and result.get("ok") and result.get("output"):
+        if args.command in {"agent-rotate", "principal-create"} and getattr(args, "save_to", None) and result.get("ok") and result.get("output"):
             args.save_to.parent.mkdir(parents=True, exist_ok=True)
             args.save_to.write_text(result["output"] + "\n")
             args.save_to.chmod(0o600)

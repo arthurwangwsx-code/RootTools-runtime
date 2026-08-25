@@ -282,6 +282,25 @@ struct SelfUpdateStatusPayload: Codable, Equatable {
     var count: Int
 }
 
+struct TrustedPrincipalDescriptor: Codable, Identifiable, Equatable {
+    var principalId: String
+    var kind: String
+    var displayName: String
+    var state: String
+    var createdAt: Int64
+    var lastUsedAt: Int64?
+    var revokedAt: Int64?
+
+    var id: String { principalId }
+    var active: Bool { state == "active" }
+}
+
+struct TrustedPrincipalCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var principals: [TrustedPrincipalDescriptor]
+    var count: Int
+}
+
 struct ApplicationInspection: Codable, Equatable {
     var bundleID: String
     var executable: String

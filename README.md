@@ -39,6 +39,8 @@ The `v0.9.0` line adds semantic runtime observation for Frida and ElleKit withou
 
 The `v0.10.0` line starts the product/runtime convergence: RootTools now boots into the stable `Overview / Device / Tasks / Agents / Settings` shell, and `POST /v1/commands/submit` is the canonical typed command ingress while `/v1/action` remains a compatibility adapter. The next increments deepen principal identity/grants and attach AiBox/Network adapters to this gateway rather than adding transport-specific executors.
 
+The `v0.11.0` line adds named command principals. A Mac host, AiBox installation, network Skill or automation workflow can receive an independent daemon-generated credential whose plaintext is shown once while only its SHA-256 hash is stored. Authentication projects the stable `principalId` into receipts/audit, and owner-confirmed revocation invalidates that credential immediately. v0.11 intentionally still uses the shared Agent capability policy; per-principal grants/scopes are the next security increment.
+
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 
 ## Build and install

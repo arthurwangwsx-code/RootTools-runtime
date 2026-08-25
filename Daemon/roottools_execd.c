@@ -30,12 +30,13 @@
 
 #include "control_plane.h"
 #include "package_controller.h"
+#include "principal_store.h"
 #include "provider_registry.h"
 #include "runtime_observer.h"
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.10.0"
+#define VERSION "0.11.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -969,7 +970,8 @@ typedef enum {
     RT_AUTH_AGENT = 2,
 } RTAuthRole;
 
-static RTAuthRole request_auth_role(const char *req) {
+static RTAuthRole request_auth_role(const char *req, char *caller, size_t caller_cap) {
+    if(caller&&caller_cap)snprintf(caller,caller_cap,"unauthenticated");
     const char *name="X-RootTools-Token:"; size_t name_len=strlen(name);
     const char *line=req;
     while(line && *line){
@@ -980,24 +982,30 @@ static RTAuthRole request_auth_role(const char *req) {
             while(value<limit && (*value==' '||*value=='\t')) value++;
             while(limit>value && (limit[-1]==' '||limit[-1]=='\t')) limit--;
             size_t value_len=(size_t)(limit-value);
-            if(constant_time_token_equal(value,value_len,ADMIN_TOKEN)) return RT_AUTH_ADMIN;
+            if(constant_time_token_equal(value,value_len,ADMIN_TOKEN)) {
+                if(caller&&caller_cap)snprintf(caller,caller_cap,"roottools-ui");
+                return RT_AUTH_ADMIN;
+            }
             char agent_token[160]={0};
             if(load_runtime_agent_token(agent_token,sizeof(agent_token),NULL)&&agent_token[0]&&
-               constant_time_token_equal(value,value_len,agent_token)) return RT_AUTH_AGENT;
+               constant_time_token_equal(value,value_len,agent_token)) {
+                if(caller&&caller_cap)snprintf(caller,caller_cap,"trusted-host-agent");
+                return RT_AUTH_AGENT;
+            }
+            if(value_len>0&&value_len<RT_PRINCIPAL_TOKEN_CAP){
+                char presented[RT_PRINCIPAL_TOKEN_CAP]={0};
+                memcpy(presented,value,value_len);presented[value_len]=0;
+                char principal_id[RT_PRINCIPAL_ID_CAP]={0},kind[RT_PRINCIPAL_KIND_CAP]={0};
+                if(rt_principal_authenticate(presented,principal_id,sizeof(principal_id),kind,sizeof(kind))){
+                    if(caller&&caller_cap)snprintf(caller,caller_cap,"principal:%s",principal_id);
+                    return RT_AUTH_AGENT;
+                }
+            }
             return RT_AUTH_NONE;
         }
         line=end+2;
     }
     return RT_AUTH_NONE;
-}
-
-static const char *auth_caller(RTAuthRole role) {
-    switch(role){
-        case RT_AUTH_ADMIN: return "roottools-ui";
-        case RT_AUTH_AGENT: return "trusted-host-agent";
-        case RT_AUTH_NONE: break;
-    }
-    return "unauthenticated";
 }
 
 static const char *auth_role_name(RTAuthRole role) {
@@ -1454,6 +1462,13 @@ static void send_package_history(int fd) {
     free(response);
 }
 
+static void send_principal_catalog(int fd) {
+    char *response=rt_principals_json();
+    if(!response){send_error(fd,503,"principal catalog unavailable");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
+}
+
 static void send_self_update_status(int fd) {
     char *response=rt_updates_json();
     if(!response){send_error(fd,503,"self-update status unavailable");return;}
@@ -1529,20 +1544,21 @@ static void send_automation_queue(int fd) {
     send_response(fd,200,"application/json",response);free(response);
 }
 
-static void send_hello(int fd, RTAuthRole role) {
+static void send_hello(int fd, RTAuthRole role, const char *caller) {
     char machine[64]={0},osbuild[64]={0};
     sysctl_string("hw.machine",machine,sizeof(machine));
     sysctl_string("kern.osversion",osbuild,sizeof(osbuild));
     int rootless=access("/var/jb",F_OK)==0;
     unsigned long long revision=0; int revision_available=ledger_current_revision(&revision);
+    char escaped_caller[256]={0};json_escape(caller?caller:"authenticated-client",escaped_caller,sizeof(escaped_caller));
     char response[4096]={0};
     snprintf(response,sizeof(response),
         "{\"service\":\"roottools.device-service\",\"schemaVersion\":%d,\"daemonVersion\":\"%s\","
-        "\"authenticatedRole\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
+        "\"authenticatedRole\":\"%s\",\"authenticatedCaller\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
-        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
+        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
         "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
-        SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),machine,osbuild,
+        SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),escaped_caller,machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
 }
@@ -1969,6 +1985,52 @@ static void execute_agent_rotate(RTActionExecution *execution) {
     if(execution->ok)execution->output=strdup(token);
 }
 
+static void execute_principal_create(const char *body, RTActionExecution *execution) {
+    char principal_id[RT_PRINCIPAL_ID_CAP]={0};
+    char kind[RT_PRINCIPAL_KIND_CAP]={0};
+    char display_name[RT_PRINCIPAL_NAME_CAP]={0};
+    if(!json_get_string(body,"principalId",principal_id,sizeof(principal_id))||
+       !json_get_string(body,"kind",kind,sizeof(kind))||
+       !json_get_string(body,"displayName",display_name,sizeof(display_name))){
+        snprintf(execution->message,sizeof(execution->message),"principalId, kind and displayName are required");
+        return;
+    }
+    char token[RT_PRINCIPAL_TOKEN_CAP]={0},error[256]={0};
+    snprintf(execution->target,sizeof(execution->target),"principal=%s kind=%s",principal_id,kind);
+    execution->executed=1;
+    if(!rt_principal_create(principal_id,kind,display_name,token,sizeof(token),error,sizeof(error))){
+        snprintf(execution->result,sizeof(execution->result),"failed");
+        snprintf(execution->message,sizeof(execution->message),"%s",error[0]?error:"Principal could not be created");
+        return;
+    }
+    execution->post_checked=1;
+    char verified_id[RT_PRINCIPAL_ID_CAP]={0},verified_kind[RT_PRINCIPAL_KIND_CAP]={0};
+    execution->post_passed=rt_principal_authenticate(token,verified_id,sizeof(verified_id),verified_kind,sizeof(verified_kind))&&
+        !strcmp(verified_id,principal_id)&&!strcmp(verified_kind,kind);
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"success":"failed");
+    snprintf(execution->message,sizeof(execution->message),execution->ok?"Trusted command principal created":"Principal credential verification failed");
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->post_passed?"new principal credential authenticates":"new credential did not authenticate");
+    if(execution->ok)execution->output=strdup(token);
+}
+
+static void execute_principal_revoke(const char *body, RTActionExecution *execution) {
+    char principal_id[RT_PRINCIPAL_ID_CAP]={0};
+    if(!json_get_string(body,"principalId",principal_id,sizeof(principal_id))){
+        snprintf(execution->message,sizeof(execution->message),"principalId is required");
+        return;
+    }
+    char error[256]={0};
+    snprintf(execution->target,sizeof(execution->target),"principal=%s",principal_id);
+    execution->executed=1;
+    execution->post_checked=1;
+    execution->post_passed=rt_principal_revoke(principal_id,error,sizeof(error));
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"success":"failed");
+    snprintf(execution->message,sizeof(execution->message),"%s",execution->ok?"Trusted command principal revoked":(error[0]?error:"Principal could not be revoked"));
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"principal state is revoked":"active principal state was not changed");
+}
+
 static void execute_queue_app_launch(const char *body, const char *job_id, RTActionExecution *execution) {
     char bundle[256]={0};
     if(!json_get_string(body,"bundleID",bundle,sizeof(bundle))||!safe_bundle_id(bundle)){
@@ -2159,6 +2221,8 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"file.write")) execute_file_write(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"file.read")) execute_file_read(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"agent.rotate")) execute_agent_rotate(&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"principal.create")) execute_principal_create(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"principal.revoke")) execute_principal_revoke(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.queue-app-launch")) execute_queue_app_launch(body,context.request_id,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"package.stage.begin")) execute_package_stage_begin(body,&execution);
@@ -2209,14 +2273,14 @@ static void handle_capability_set(int fd, const char *body, RTAuthRole role) {
 
 static void handle(int fd) {
     char *req=calloc(1,MAX_REQUEST); if(!req)return; ssize_t n=read_request(fd,req,MAX_REQUEST); if(n<=0){free(req);return;} if(n==-2){send_error(fd,400,"request body too large");free(req);return;}
-    RTAuthRole auth_role=request_auth_role(req);
+    char caller[192]={0};
+    RTAuthRole auth_role=request_auth_role(req,caller,sizeof(caller));
     if (auth_role==RT_AUTH_NONE) { send_response(fd, 401, "application/json", "{\"error\":\"unauthorized\"}"); free(req); return; }
-    const char *caller=auth_caller(auth_role);
     int trusted_confirmation_source=auth_role==RT_AUTH_ADMIN;
     char method[16]={0}, path[256]={0}; sscanf(req, "%15s %255s", method, path); const char *body=request_body(req);
 
     if (!strcmp(path, "/v1/hello") && !strcmp(method,"GET")) {
-        send_hello(fd,auth_role); free(req); return;
+        send_hello(fd,auth_role,caller); free(req); return;
     }
     if (!strcmp(path, "/v1/status") && !strcmp(method,"GET")) {
         struct utsname u; uname(&u);
@@ -2243,6 +2307,10 @@ static void handle(int fd) {
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/package/plan")) { if(authorize_read_capability(fd,"device.package.plan")) send_package_plan(fd,body); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/catalog")) { if(authorize_read_capability(fd,"device.package.list")) send_package_catalog(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/packages/history")) { if(authorize_read_capability(fd,"device.package.history")) send_package_history(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/principals/catalog")) {
+        if(auth_role!=RT_AUTH_ADMIN)send_error(fd,403,"principal catalog is owner-only");
+        else if(authorize_read_capability(fd,"device.principal.list"))send_principal_catalog(fd);
+    }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/self-update/status")) { if(authorize_read_capability(fd,"device.self-update.status")) send_self_update_status(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/device/lock-state")) { if(authorize_read_capability(fd,"device.lock.observe")) send_lock_state(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/automation/state")) { if(authorize_read_capability(fd,"device.automation.observe")) send_automation_state(fd); }

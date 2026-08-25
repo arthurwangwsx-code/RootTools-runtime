@@ -84,6 +84,8 @@ Replace the engineering-dashboard information architecture with the stable five-
 
 Make `POST /v1/commands/submit` the canonical ingress, retain `/v1/action` as a compatibility adapter, separate principal identity from transport, add scoped grants, pair/revoke flows, and preserve one receipt/event model across RootTools UI, Mac Host, AiBox and future network Skills.
 
+**v0.10 foundation:** canonical Command Gateway + compatibility ingress. **v0.11 foundation:** named host/app/skill/automation principals, independent hashed credentials, owner create/revoke, and authenticated principal identity in receipts/audit. P9 remains in progress until per-principal capability/resource grants, pairing and credential expiry/rotation are complete.
+
 ### P10 — AiBox & Network Integration
 
 Add an AiBox adapter over the existing `DeviceExecution*` contract, then an outbound trusted relay for network Skills. Neither integration receives raw shell, provider argv, owner token, or RootTools implementation models.

@@ -38,7 +38,7 @@ Important properties:
 
 ## Principal model
 
-The existing `owner` and `agent` roles are only the first two principal classes. The next protocol revision should persist a `principalId` and `principalKind` independently from transport:
+The existing `owner` and legacy `agent` roles remain compatibility classes. v0.11 persists a `principalId` and `principalKind` independently from transport:
 
 ```text
 owner-ui
@@ -49,6 +49,8 @@ automation:<workflow-id>
 ```
 
 Every principal receives grants over stable capability IDs. A transport may reconnect or change without changing principal identity.
+
+v0.11 completes the identity/credential/revocation half of this model. Per-principal capability/resource grants remain the next increment; until then named principals share the existing Agent capability policy.
 
 ## Transport adapters
 

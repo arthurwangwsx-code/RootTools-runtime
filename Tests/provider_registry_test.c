@@ -17,6 +17,9 @@ int main(void) {
     assert(!strcmp(rt_provider_for_capability("device.self-update.schedule"), "roottools.updater"));
     assert(!strcmp(rt_provider_for_capability("device.runtime.frida.observe"), "runtime.frida"));
     assert(!strcmp(rt_provider_for_capability("device.runtime.ellekit.observe"), "runtime.ellekit"));
+    assert(!strcmp(rt_provider_for_capability("device.principal.list"), "roottools.execd"));
+    assert(!strcmp(rt_provider_for_capability("device.principal.create"), "roottools.execd"));
+    assert(!strcmp(rt_provider_for_capability("device.principal.revoke"), "roottools.execd"));
 
     char *catalog = rt_providers_json();
     assert(catalog != NULL);

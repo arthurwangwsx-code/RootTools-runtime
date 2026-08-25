@@ -87,6 +87,24 @@ private struct AgentRotateBody: Codable {
     var confirmed: Bool
 }
 
+private struct PrincipalCreateBody: Codable {
+    var capabilityId: String
+    var principalId: String
+    var kind: String
+    var displayName: String
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
+private struct PrincipalRevokeBody: Codable {
+    var capabilityId: String
+    var principalId: String
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
 private struct AutomationCancelBody: Codable {
     var capabilityId: String
     var jobID: String
@@ -195,6 +213,11 @@ final class DaemonClient {
     func selfUpdateStatus() async throws -> SelfUpdateStatusPayload {
         let data = try await request(path: "/v1/self-update/status")
         return try decoder.decode(SelfUpdateStatusPayload.self, from: data)
+    }
+
+    func principalCatalog() async throws -> TrustedPrincipalCatalog {
+        let data = try await request(path: "/v1/principals/catalog")
+        return try decoder.decode(TrustedPrincipalCatalog.self, from: data)
     }
 
     func stagePackage(url: URL, expectedIdentifier: String = "") async throws -> ActionReceipt {
@@ -410,6 +433,36 @@ final class DaemonClient {
             path: "/v1/commands/submit",
             body: AgentRotateBody(
                 capabilityId: "device.agent.rotate",
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: true
+            ),
+            response: ActionReceipt.self
+        )
+    }
+
+    func createPrincipal(principalID: String, kind: String, displayName: String) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: PrincipalCreateBody(
+                capabilityId: "device.principal.create",
+                principalId: principalID,
+                kind: kind,
+                displayName: displayName,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: true
+            ),
+            response: ActionReceipt.self
+        )
+    }
+
+    func revokePrincipal(principalID: String) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: PrincipalRevokeBody(
+                capabilityId: "device.principal.revoke",
+                principalId: principalID,
                 requestId: UUID().uuidString,
                 caller: caller,
                 confirmed: true

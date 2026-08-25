@@ -102,6 +102,7 @@ def main() -> int:
         package_root = temp_path / "packages"
         package_db = temp_path / "packages.sqlite3"
         update_db = temp_path / "self-update.sqlite3"
+        principal_db = temp_path / "principals.sqlite3"
         port = free_port()
         tcc = sqlite3.connect(tcc_path)
         tcc.execute(
@@ -128,6 +129,7 @@ def main() -> int:
             "ROOTTOOLS_PACKAGE_ROOT": str(package_root),
             "ROOTTOOLS_PACKAGE_DB": str(package_db),
             "ROOTTOOLS_UPDATE_DB": str(update_db),
+            "ROOTTOOLS_PRINCIPAL_DB": str(principal_db),
             "ROOTTOOLS_TEST_LOCK_STATE": "locked",
             "ROOTTOOLS_TEST_SCREEN_BLANKED": "1",
         }
@@ -146,6 +148,7 @@ def main() -> int:
             assert hello["schemaVersion"] == 1
             assert hello["authenticatedRole"] == "agent"
             assert hello["features"]["commandGateway"] is True
+            assert hello["features"]["namedPrincipals"] is True
             assert hello["features"]["durableIdempotency"] is True
             assert hello["features"]["expectedRevision"] is True
             assert hello["features"]["rawPrivilegedShell"] is False
@@ -161,6 +164,75 @@ def main() -> int:
             status, owner_hello = request(port, args.admin_token, "GET", "/v1/hello")
             assert status == 200
             assert owner_hello["authenticatedRole"] == "owner"
+            assert owner_hello["authenticatedCaller"] == "roottools-ui"
+
+            status, principal_catalog = request(port, args.admin_token, "GET", "/v1/principals/catalog")
+            assert status == 200
+            assert principal_catalog == {"schemaVersion": 1, "principals": [], "count": 0}
+            status, _ = request(port, args.agent_token, "GET", "/v1/principals/catalog")
+            assert status == 403
+
+            agent_create = action(
+                port,
+                args.agent_token,
+                "device.principal.create",
+                confirmed=True,
+                parameters={
+                    "principalId": "host:test-mac",
+                    "kind": "host",
+                    "displayName": "Test Mac",
+                },
+            )
+            assert agent_create["result"] == "confirmation_required"
+            assert agent_create["executed"] is False
+
+            owner_create = action(
+                port,
+                args.admin_token,
+                "device.principal.create",
+                confirmed=True,
+                parameters={
+                    "principalId": "host:test-mac",
+                    "kind": "host",
+                    "displayName": "Test Mac",
+                },
+            )
+            assert owner_create["ok"] is True
+            assert owner_create["result"] == "success"
+            principal_token = owner_create["output"]
+            assert isinstance(principal_token, str) and len(principal_token) == 48
+
+            status, principal_catalog = request(port, args.admin_token, "GET", "/v1/principals/catalog")
+            assert status == 200
+            assert principal_catalog["count"] == 1
+            assert principal_catalog["principals"][0]["principalId"] == "host:test-mac"
+            assert principal_catalog["principals"][0]["kind"] == "host"
+            assert principal_catalog["principals"][0]["displayName"] == "Test Mac"
+            assert principal_token not in json.dumps(principal_catalog)
+
+            status, principal_hello = request(port, principal_token, "GET", "/v1/hello")
+            assert status == 200
+            assert principal_hello["authenticatedRole"] == "agent"
+            assert principal_hello["authenticatedCaller"] == "principal:host:test-mac"
+            principal_write = action(
+                port,
+                principal_token,
+                "device.fs.write",
+                parameters={"scope": "mobile", "name": "principal-proof.txt", "content": "named principal"},
+            )
+            assert principal_write["ok"] is True
+            assert principal_write["caller"] == "principal:host:test-mac"
+
+            owner_revoke = action(
+                port,
+                args.admin_token,
+                "device.principal.revoke",
+                confirmed=True,
+                parameters={"principalId": "host:test-mac"},
+            )
+            assert owner_revoke["ok"] is True
+            status, _ = request(port, principal_token, "GET", "/v1/hello")
+            assert status == 401
 
             status, catalog = request(port, args.agent_token, "GET", "/v1/capabilities/catalog")
             assert status == 200
