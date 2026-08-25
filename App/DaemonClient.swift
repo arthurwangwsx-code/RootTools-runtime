@@ -222,7 +222,7 @@ final class DaemonClient {
         let packageID = "pkg-\(UUID().uuidString.lowercased().replacingOccurrences(of: "-", with: ""))"
 
         let begin = try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: PackageStageBeginBody(
                 capabilityId: "device.package.stage.begin",
                 packageId: packageID,
@@ -246,7 +246,7 @@ final class DaemonClient {
             let data = try uploadHandle.read(upToCount: 256 * 1024) ?? Data()
             if data.isEmpty { break }
             let receipt = try await post(
-                path: "/v1/action",
+                path: "/v1/commands/submit",
                 body: PackageStageChunkBody(
                     capabilityId: "device.package.stage.chunk",
                     packageId: packageID,
@@ -264,7 +264,7 @@ final class DaemonClient {
         }
 
         let commit = try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: PackageIDActionBody(
                 capabilityId: "device.package.stage.commit",
                 packageId: packageID,
@@ -282,7 +282,7 @@ final class DaemonClient {
     func installPackage(_ package: StagedPackageDescriptor, confirmed: Bool) async throws -> ActionReceipt {
         let capability = package.format == "deb" ? "device.package.install-deb" : "device.package.install-ipa"
         return try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: PackageIDActionBody(
                 capabilityId: capability,
                 packageId: package.packageId,
@@ -298,7 +298,7 @@ final class DaemonClient {
     func rollbackPackage(_ package: StagedPackageDescriptor, confirmed: Bool) async throws -> ActionReceipt {
         let capability = package.format == "deb" ? "device.package.rollback-deb" : "device.package.rollback-ipa"
         return try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: PackageIDActionBody(
                 capabilityId: capability,
                 packageId: package.packageId,
@@ -314,7 +314,7 @@ final class DaemonClient {
     func uninstallPackage(_ package: StagedPackageDescriptor, confirmed: Bool) async throws -> ActionReceipt {
         let capability = package.format == "deb" ? "device.package.uninstall-deb" : "device.package.uninstall-ipa"
         return try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: PackageIDActionBody(
                 capabilityId: capability,
                 packageId: package.packageId,
@@ -332,7 +332,7 @@ final class DaemonClient {
             throw DaemonError.actionFailed("Only a verified RootTools DEB can use self-update")
         }
         return try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: PackageIDActionBody(
                 capabilityId: "device.self-update.schedule",
                 packageId: package.packageId,
@@ -346,7 +346,7 @@ final class DaemonClient {
 
     func discardPackage(_ package: StagedPackageDescriptor) async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: PackageIDActionBody(
                 capabilityId: "device.package.discard",
                 packageId: package.packageId,
@@ -407,7 +407,7 @@ final class DaemonClient {
 
     func rotateAgentCredential() async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: AgentRotateBody(
                 capabilityId: "device.agent.rotate",
                 requestId: UUID().uuidString,
@@ -420,7 +420,7 @@ final class DaemonClient {
 
     func launchApp(bundleID: String) async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: BundleActionBody(
                 capabilityId: "device.app.launch", bundleID: bundleID,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
@@ -431,7 +431,7 @@ final class DaemonClient {
 
     func queueAppLaunch(bundleID: String) async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: BundleActionBody(
                 capabilityId: "device.automation.queue-app-launch", bundleID: bundleID,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
@@ -442,7 +442,7 @@ final class DaemonClient {
 
     func cancelAutomation(jobID: String) async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: AutomationCancelBody(
                 capabilityId: "device.automation.cancel", jobID: jobID,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
@@ -453,7 +453,7 @@ final class DaemonClient {
 
     func terminateApp(bundleID: String) async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: BundleActionBody(
                 capabilityId: "device.app.terminate", bundleID: bundleID,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
@@ -464,7 +464,7 @@ final class DaemonClient {
 
     func terminateProcess(pid: Int, confirmed: Bool) async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: ProcessActionBody(
                 capabilityId: "device.process.terminate", pid: pid,
                 requestId: UUID().uuidString, caller: caller, confirmed: confirmed
@@ -475,7 +475,7 @@ final class DaemonClient {
 
     func writeFile(scope: FileScope, name: String, content: String) async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: FileWriteBody(
                 capabilityId: "device.fs.write", scope: scope.rawValue, name: name, content: content,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
@@ -486,7 +486,7 @@ final class DaemonClient {
 
     func readFile(scope: FileScope, name: String) async throws -> ActionReceipt {
         try await post(
-            path: "/v1/action",
+            path: "/v1/commands/submit",
             body: FileReadBody(
                 capabilityId: "device.fs.read", scope: scope.rawValue, name: name,
                 requestId: UUID().uuidString, caller: caller, confirmed: false

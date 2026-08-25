@@ -35,7 +35,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.9.1"
+#define VERSION "0.10.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1540,7 +1540,7 @@ static void send_hello(int fd, RTAuthRole role) {
         "{\"service\":\"roottools.device-service\",\"schemaVersion\":%d,\"daemonVersion\":\"%s\","
         "\"authenticatedRole\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
-        "\"features\":{\"typedActions\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
+        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"ownerPolicy\":true,\"durableIdempotency\":true,"
         "\"expectedRevision\":true,\"eventAudit\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
@@ -2266,6 +2266,7 @@ static void handle(int fd) {
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/capabilities/set")) handle_capability_set(fd,body,auth_role);
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/audit")) { if(authorize_read_capability(fd,"device.audit.read")) send_text_payload(fd, audit_text()); }
     else if (!strcmp(method,"POST") && !strcmp(path, "/v1/events/replay")) { if(authorize_read_capability(fd,"device.events.read")) send_event_replay(fd,body); }
+    else if (!strcmp(method,"POST") && !strcmp(path,"/v1/commands/submit")) route_action_request(fd,body,caller,trusted_confirmation_source);
     else if (!strcmp(method,"POST") && !strcmp(path,"/v1/action")) route_action_request(fd,body,caller,trusted_confirmation_source);
     else if (!strcmp(method,"POST") && !strcmp(path,"/v1/actions/app-launch")) route_action(fd,"app.launch",body,caller,trusted_confirmation_source);
     else if (!strcmp(method,"POST") && !strcmp(path,"/v1/actions/app-terminate")) route_action(fd,"app.terminate",body,caller,trusted_confirmation_source);

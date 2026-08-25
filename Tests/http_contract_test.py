@@ -62,7 +62,7 @@ def action(
         port,
         token,
         "POST",
-        "/v1/action",
+        "/v1/commands/submit",
         body,
     )
     assert status == 200, (status, payload)
@@ -145,6 +145,7 @@ def main() -> int:
             assert hello["service"] == "roottools.device-service"
             assert hello["schemaVersion"] == 1
             assert hello["authenticatedRole"] == "agent"
+            assert hello["features"]["commandGateway"] is True
             assert hello["features"]["durableIdempotency"] is True
             assert hello["features"]["expectedRevision"] is True
             assert hello["features"]["rawPrivilegedShell"] is False

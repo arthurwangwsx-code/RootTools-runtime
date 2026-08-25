@@ -2,11 +2,11 @@
 
 ## Product definition
 
-RootTools is the privileged device control plane for a personally owned iOS device. It is not a generic jailbreak shell and it is not an Agent runtime. Higher layers such as AiBox, an Agent, automation workflows, or the local UI call semantic Device Ops. RootTools owns privilege routing, policy, execution, post-condition verification, audit, and recovery.
+RootTools is the resident privileged device runtime and command node for a personally owned iOS device. It is not a generic jailbreak shell and it is not the reasoning Agent. Higher layers such as AiBox, a Mac host, a network Skill, automation workflows, or the local UI submit semantic Device Ops. RootTools owns command ingress, caller trust, privilege routing, policy, execution, post-condition verification, audit, and recovery.
 
 The architectural invariant is:
 
-`Caller -> Device Ops -> RootTools Control Plane -> Typed Privileged Adapter -> iOS/jailbreak runtime`
+`Caller -> Command Gateway -> Device Ops -> RootTools Control Plane -> Typed Privileged Adapter -> iOS/jailbreak runtime`
 
 No model-facing or automation-facing surface may expose arbitrary privileged shell execution.
 
@@ -22,6 +22,8 @@ No model-facing or automation-facing surface may expose arbitrary privileged she
 8. Frida, ElleKit, ZXTouch, SpringBoard tools, and Darwin APIs are replaceable adapters.
 9. Agent-facing Device Ops remain stable when jailbreak internals change.
 10. Recovery and rollback are preferred over capability breadth.
+11. Caller identity is independent from transport; Mac, AiBox and network Skills converge on one Command Gateway.
+12. Product navigation is organized by user intent (Overview / Device / Tasks / Agents / Settings), not by provider implementation.
 
 ## Phases
 
@@ -74,6 +76,18 @@ Make the phone a durable execution node with Trigger, Workflow, Step, Run, Retry
 
 Reboot/re-jailbreak recovery, crash-loop safe mode, protocol/schema versioning, atomic self-update with rollback, compatibility matrix, and multi-device identity/transport.
 
+### P8 — Product Shell & Device Manager
+
+Replace the engineering-dashboard information architecture with the stable five-tab product shell. Add product-quality app/package/process management, task status, principal management, maintenance surfaces, empty/degraded/error states, and a consistent interaction language for risk/post-condition.
+
+### P9 — Command Gateway & Trusted Principals
+
+Make `POST /v1/commands/submit` the canonical ingress, retain `/v1/action` as a compatibility adapter, separate principal identity from transport, add scoped grants, pair/revoke flows, and preserve one receipt/event model across RootTools UI, Mac Host, AiBox and future network Skills.
+
+### P10 — AiBox & Network Integration
+
+Add an AiBox adapter over the existing `DeviceExecution*` contract, then an outbound trusted relay for network Skills. Neither integration receives raw shell, provider argv, owner token, or RootTools implementation models.
+
 ## Long-term domain organization
 
 Organize code by domain, not screen:
@@ -86,8 +100,9 @@ Each domain converges on:
 
 ## Near-term order
 
-1. Finish P3 provider hardening: extract concrete adapters and add the typed Package Controller.
-2. Continue P2 read/inspect breadth without introducing raw write primitives.
-3. Bring Accessibility + ZXTouch semantic UI actions behind the Provider Plane in P4.
-4. Add P5 Agent Device Ops only through stable capability contracts; never expose provider internals as executable primitives.
+1. Stabilize the P8 five-tab product shell and device-management interaction model.
+2. Finish P3/P4 provider hardening and semantic UI automation without introducing raw execution primitives.
+3. Deepen P9 Command Gateway with principal identity/grants while keeping the existing capability router as the only executor seam.
+4. Add the P10 AiBox adapter against AiBox `DeviceExecution*`, not a second RootTools-specific action model.
+5. Add outbound network relay only after principal/grant/revocation and task/audit semantics are complete.
 

@@ -6,10 +6,13 @@ Independent iOS 16+ jailbreak device control plane for personal devices.
 
 RootTools is evolving from a privileged toolbox into a policy-controlled iOS Device Control Plane. The daemon owns capability metadata, risk policy, semantic action routing, audit receipts, and post-condition verification. UI, future automation, and future Agent adapters call typed capabilities rather than receiving a raw privileged shell.
 
+- Product definition: `docs/product/product-definition.md`
 - Long-term roadmap: `docs/roadmap/long-term-roadmap.md`
 - Control Plane architecture: `docs/architecture/control-plane.md`
+- Command Gateway: `docs/architecture/command-gateway.md`
 - Provider / Adapter architecture: `docs/architecture/provider-adapter.md`
 - Package Controller architecture: `docs/architecture/package-controller.md`
+- Product information architecture: `docs/ux/product-information-architecture.md`
 - P1 implementation plan: `docs/phases/p1-control-plane.md`
 
 The first milestone intentionally kept the privileged surface read-only: device health, jailbreak runtime, apps, processes, selected root filesystem views, network observation, and diagnostics.
@@ -33,6 +36,8 @@ The `v0.7.0` line completes the first managed package lifecycle. A newer managed
 The `v0.8.0` line adds the independent RootTools self-updater. `roottools-execd` only persists the R2 owner-confirmed update request and returns its normal ActionReceipt; after the connection closes, a separate `roottools-updater` process validates the staged `com.arthur.roottools` DEB, extracts only the allowlisted data payload, pre-signs candidate binaries, atomically swaps the RootTools App/daemon/updater/plists, and health-checks the new daemon. If the expected daemon version does not come online, the helper restores the previous sibling backups and restarts the old daemon. Generic package install/uninstall paths explicitly reject RootTools itself.
 
 The `v0.9.0` line adds semantic runtime observation for Frida and ElleKit without turning instrumentation into a caller-facing execution surface. Frida observation reports provider/port readiness, the fixed `frida-server` process PID/UID, candidate server path, and installed package/version facts while explicitly reporting that script execution and arbitrary attach are not exposed. ElleKit observation reports the fixed rootless library/loader/injector/pspawn/safe-mode/TweakInject component facts and installed package/version while raw hook/injection APIs remain unavailable. Mac clients expose `frida-status` and `ellekit-status`, and the Providers screen shows the same runtime facts.
+
+The `v0.10.0` line starts the product/runtime convergence: RootTools now boots into the stable `Overview / Device / Tasks / Agents / Settings` shell, and `POST /v1/commands/submit` is the canonical typed command ingress while `/v1/action` remains a compatibility adapter. The next increments deepen principal identity/grants and attach AiBox/Network adapters to this gateway rather than adding transport-specific executors.
 
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 
