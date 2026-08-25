@@ -126,9 +126,13 @@ done
 chmod 755 "$APP/RootTools" "$DAEMON" "$UPDATER"
 chown 0:0 "$DAEMON" "$UPDATER" "$PLIST" "$UPDATER_PLIST"
 if [ -n "$LDID" ]; then
-    "$LDID" -S "$APP/RootTools"
-    "$LDID" -S "$DAEMON"
-    "$LDID" -S "$UPDATER"
+    if "$LDID" -S "$APP/RootTools" && \
+       "$LDID" -S "$DAEMON" && \
+       "$LDID" -S "$UPDATER"; then
+        echo "RootTools: refreshed build-time signatures with device ldid"
+    else
+        echo "RootTools: device ldid is present but unusable; keeping build-time ad-hoc signatures"
+    fi
 else
     echo "RootTools: device ldid unavailable; using build-time ad-hoc signatures"
 fi
@@ -182,8 +186,8 @@ def main() -> int:
     parser.add_argument("--updater", type=Path, default=DEFAULT_UPDATER)
     parser.add_argument("--plist", type=Path, default=DEFAULT_PLIST)
     parser.add_argument("--updater-plist", type=Path, default=DEFAULT_UPDATER_PLIST)
-    parser.add_argument("--version", default="0.9.0-3")
-    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.9.0-3_iphoneos-arm64.deb")
+    parser.add_argument("--version", default="0.9.0-4")
+    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.9.0-4_iphoneos-arm64.deb")
     args = parser.parse_args()
     build_package(args.app, args.daemon, args.updater, args.plist, args.updater_plist, args.output, args.version)
     print(args.output)
