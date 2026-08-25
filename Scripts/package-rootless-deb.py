@@ -87,6 +87,7 @@ Section: Utilities
 Priority: optional
 Maintainer: RootTools
 Depends: firmware (>= 16.0)
+Recommends: ldid
 Description: Policy-controlled privileged iOS device control plane
 """
 
@@ -97,14 +98,19 @@ DAEMON=/var/jb/usr/local/bin/roottools-execd
 UPDATER=/var/jb/usr/local/bin/roottools-updater
 PLIST=/var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist
 UPDATER_PLIST=/var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist
-LDID=/var/jb/usr/bin/ldid
-
-[ -x "$LDID" ] || { echo "RootTools: ldid unavailable" >&2; exit 1; }
+LDID=""
+for candidate in /var/jb/usr/bin/ldid /var/jb/bin/ldid /usr/bin/ldid; do
+    if [ -x "$candidate" ]; then LDID="$candidate"; break; fi
+done
 chmod 755 "$APP/RootTools" "$DAEMON" "$UPDATER"
 chown 0:0 "$DAEMON" "$UPDATER" "$PLIST" "$UPDATER_PLIST"
-"$LDID" -S "$APP/RootTools"
-"$LDID" -S "$DAEMON"
-"$LDID" -S "$UPDATER"
+if [ -n "$LDID" ]; then
+    "$LDID" -S "$APP/RootTools"
+    "$LDID" -S "$DAEMON"
+    "$LDID" -S "$UPDATER"
+else
+    echo "RootTools: device ldid unavailable; using build-time ad-hoc signatures"
+fi
 launchctl bootout system/com.arthur.roottools.execd >/dev/null 2>&1 || true
 launchctl bootout system/com.arthur.roottools.updater >/dev/null 2>&1 || true
 launchctl bootstrap system "$PLIST"
@@ -155,8 +161,8 @@ def main() -> int:
     parser.add_argument("--updater", type=Path, default=DEFAULT_UPDATER)
     parser.add_argument("--plist", type=Path, default=DEFAULT_PLIST)
     parser.add_argument("--updater-plist", type=Path, default=DEFAULT_UPDATER_PLIST)
-    parser.add_argument("--version", default="0.9.0-1")
-    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.9.0-1_iphoneos-arm64.deb")
+    parser.add_argument("--version", default="0.9.0-2")
+    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.9.0-2_iphoneos-arm64.deb")
     args = parser.parse_args()
     build_package(args.app, args.daemon, args.updater, args.plist, args.updater_plist, args.output, args.version)
     print(args.output)

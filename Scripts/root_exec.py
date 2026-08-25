@@ -15,8 +15,13 @@ from usbmux_proxy import discover_udid, port_forward
 FRIDA_PORT = 27042
 
 def frida_python() -> str:
-    executable = Path(shutil.which("frida") or "")
-    if not executable.exists(): raise SystemExit("frida-tools not found")
+    candidates = [
+        shutil.which("frida"),
+        str(Path.home() / "Library/Python/3.9/bin/frida"),
+        str(Path.home() / ".local/bin/frida"),
+    ]
+    executable = next((Path(item) for item in candidates if item and Path(item).is_file()), None)
+    if executable is None: raise SystemExit("frida-tools not found")
     first = executable.read_text(errors="ignore").splitlines()[0]
     return first[2:].split()[0]
 
@@ -38,7 +43,13 @@ def bridge(udid: str):
 
 def run_root(udid: str, command: str, timeout: float = 15.0) -> tuple[int,str,str]:
     helper = r'''
-import frida, sys, threading
+import sys, threading, typing
+if not hasattr(typing, "NotRequired"):
+    from typing_extensions import NotRequired, Required, ParamSpec
+    typing.NotRequired = NotRequired
+    typing.Required = Required
+    typing.ParamSpec = ParamSpec
+import frida
 endpoint, command, timeout_text = sys.argv[1:4]
 device = frida.get_device_manager().add_remote_device(endpoint)
 stdout=[]; stderr=[]
@@ -80,7 +91,13 @@ print('\n__PY_ROOT_RC__' + str(rc))
 
 def push(udid: str, local: Path, remote: str):
     helper = r'''
-import frida, sys, threading
+import sys, threading, typing
+if not hasattr(typing, "NotRequired"):
+    from typing_extensions import NotRequired, Required, ParamSpec
+    typing.NotRequired = NotRequired
+    typing.Required = Required
+    typing.ParamSpec = ParamSpec
+import frida
 endpoint, local, remote = sys.argv[1:4]
 device = frida.get_device_manager().add_remote_device(endpoint)
 data=open(local,'rb').read()

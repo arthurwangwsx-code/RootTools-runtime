@@ -21,12 +21,9 @@ python3 Scripts/root_exec.py --udid "$UDID" push build/daemon/roottools-updater 
 python3 Scripts/root_exec.py --udid "$UDID" push Daemon/com.arthur.roottools.execd.plist /var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist
 python3 Scripts/root_exec.py --udid "$UDID" push Daemon/com.arthur.roottools.updater.plist /var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist
 
-# A fresh development host may not have ldid installed. In that case sign the
-# final device-side binaries with the jailbreak bootstrap's ldid before launchd
-# or SpringBoard attempts to execute them. Fail closed if neither side can sign.
-if ! command -v ldid >/dev/null 2>&1; then
-  python3 Scripts/root_exec.py --udid "$UDID" exec "LDID=/var/jb/usr/bin/ldid; [ -x \"\$LDID\" ] || { echo 'device ldid is unavailable' >&2; exit 42; }; \"\$LDID\" -S '$REMOTE_APP/RootTools'; \"\$LDID\" -S /var/jb/usr/local/bin/roottools-execd; \"\$LDID\" -S /var/jb/usr/local/bin/roottools-updater"
-fi
+# build.sh emits host-side ad-hoc signed payloads. If the device also has ldid,
+# refresh those signatures after transfer; otherwise keep the build-time ones.
+python3 Scripts/root_exec.py --udid "$UDID" exec "LDID=''; for candidate in /var/jb/usr/bin/ldid /var/jb/bin/ldid /usr/bin/ldid; do [ -x \"\$candidate\" ] && LDID=\"\$candidate\" && break; done; if [ -n \"\$LDID\" ]; then \"\$LDID\" -S '$REMOTE_APP/RootTools'; \"\$LDID\" -S /var/jb/usr/local/bin/roottools-execd; \"\$LDID\" -S /var/jb/usr/local/bin/roottools-updater; else echo 'device ldid unavailable; using build-time signatures'; fi"
 
 python3 Scripts/root_exec.py --udid "$UDID" exec "chmod 755 /var/jb/usr/local/bin/roottools-execd /var/jb/usr/local/bin/roottools-updater; chown 0:0 /var/jb/usr/local/bin/roottools-execd /var/jb/usr/local/bin/roottools-updater /var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist /var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist; launchctl bootout system/com.arthur.roottools.execd >/dev/null 2>&1 || true; launchctl bootout system/com.arthur.roottools.updater >/dev/null 2>&1 || true; launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist; launchctl bootstrap system /var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist; sleep 1; /var/jb/usr/bin/uicache -p '$REMOTE_APP'"
 

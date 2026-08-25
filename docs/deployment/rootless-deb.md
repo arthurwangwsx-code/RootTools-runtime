@@ -11,7 +11,7 @@ python3 Scripts/package-rootless-deb.py
 
 Default output:
 
-`build/packages/roottools_0.9.0-1_iphoneos-arm64.deb`
+`build/packages/roottools_0.9.0-2_iphoneos-arm64.deb`
 
 ## Package allowlist
 
@@ -23,12 +23,17 @@ The package data archive contains only:
 - `/var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist`
 - `/var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist`
 
+The build pre-signs the App executable, daemon, and independent updater on the
+Mac using host `ldid` when available, otherwise macOS `codesign -s -`. This
+avoids bootstrap failure when the target jailbreak does not yet have `ldid`.
+
 The post-install script:
 
-1. signs the App executable, daemon, and independent updater with the jailbreak bootstrap's `/var/jb/usr/bin/ldid`;
-2. fixes executable/ownership metadata;
-3. reloads the RootTools daemon and registers the one-shot `system/com.arthur.roottools.updater` recovery job;
-4. refreshes the RootTools app registration with `uicache`.
+1. optionally refreshes those signatures with a device-side `ldid` when present;
+2. otherwise keeps the build-time ad-hoc signatures;
+3. fixes executable/ownership metadata;
+4. reloads the RootTools daemon and registers the one-shot `system/com.arthur.roottools.updater` recovery job;
+5. refreshes the RootTools app registration with `uicache`.
 
 It does not expose or install a general root shell.
 
