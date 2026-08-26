@@ -58,6 +58,8 @@ v0.18 adds device-wide read-only Procursus/dpkg installed-package inventory. The
 
 v0.19 adds the first Remote Worker operating mode for a phone acting as a durable automation node: bounded always-awake assertion, owner-configured low-brightness target, battery/thermal/power observation, hysteresis thermal pause/resume and UI-task gating. Thermal telemetry is fail-safe: if RootTools cannot prove a battery temperature signal while worker mode is enabled, it releases the display assertion and holds UI work. Charge-control mutation stays unavailable until a reversible device-specific path is physically verified.
 
+v0.20 adds a product-level scoped Files Manager over the existing filesystem capability plane. The browser supports nested relative paths inside declared `mobile`/`bootstrap` roots, metadata/search/navigation and bounded text create/read/edit. Every path segment is validated and traversed with no-follow directory/file descriptors; symlinks may be observed but are never followed. Arbitrary absolute filesystem roots remain outside the protocol.
+
 ### P3 — Jailbreak & Runtime Platform
 
 Normalize Dopamine, Procursus, launchd, Sileo, Frida, ElleKit, TrollStore, SSH, and ZXTouch behind semantic runtime capabilities. Never expose raw Frida/ElleKit scripting as a model-facing primitive.

@@ -5,6 +5,7 @@ import argparse
 import base64
 import hashlib
 import json
+import os
 import plistlib
 from pathlib import Path
 import socket
@@ -109,6 +110,10 @@ def main() -> int:
         jailbreak_apps_root = temp_path / "jailbreak-apps"
         user_apps_root = temp_path / "user-apps"
         fixture_app = system_apps_root / "Fixture.app"
+        nested_scope = mobile_scope / "workspace" / "notes"
+        nested_scope.mkdir(parents=True)
+        (nested_scope / "readme.txt").write_text("nested fixture\n")
+        os.symlink(nested_scope / "readme.txt", mobile_scope / "unsafe-link")
         fixture_app.mkdir(parents=True)
         jailbreak_apps_root.mkdir(parents=True)
         user_apps_root.mkdir(parents=True)
@@ -877,7 +882,64 @@ def main() -> int:
             status, fs_list = request(port, args.agent_token, "POST", "/v1/fs/list", {"scope": "mobile"})
             assert status == 200
             assert fs_list["scope"] == "mobile"
+            assert fs_list["path"] == ""
             assert isinstance(fs_list["entries"], list)
+            by_name = {item["name"]: item for item in fs_list["entries"]}
+            assert by_name["workspace"]["kind"] == "directory"
+            assert by_name["unsafe-link"]["kind"] == "symlink"
+
+            status, nested_list = request(
+                port,
+                args.agent_token,
+                "POST",
+                "/v1/fs/list",
+                {"scope": "mobile", "path": "workspace/notes"},
+            )
+            assert status == 200
+            assert nested_list["schemaVersion"] == 2
+            assert nested_list["path"] == "workspace/notes"
+            assert nested_list["entries"][0]["name"] == "readme.txt"
+            assert nested_list["entries"][0]["kind"] == "file"
+
+            nested_read = action(
+                port,
+                args.agent_token,
+                "device.fs.read",
+                parameters={"scope": "mobile", "path": "workspace/notes/readme.txt"},
+            )
+            assert nested_read["ok"] is True
+            assert nested_read["output"] == "nested fixture\n"
+            nested_write = action(
+                port,
+                args.agent_token,
+                "device.fs.write",
+                parameters={"scope": "mobile", "path": "workspace/notes/edited.txt", "content": "edited fixture"},
+            )
+            assert nested_write["ok"] is True
+            assert (nested_scope / "edited.txt").read_text() == "edited fixture"
+
+            denied_traversal = action(
+                port,
+                args.agent_token,
+                "device.fs.read",
+                parameters={"scope": "mobile", "path": "workspace/../unsafe-link"},
+            )
+            assert denied_traversal["ok"] is False
+            denied_symlink = action(
+                port,
+                args.agent_token,
+                "device.fs.read",
+                parameters={"scope": "mobile", "path": "unsafe-link"},
+            )
+            assert denied_symlink["ok"] is False
+            status, _ = request(
+                port,
+                args.agent_token,
+                "POST",
+                "/v1/fs/list",
+                {"scope": "mobile", "path": "unsafe-link"},
+            )
+            assert status == 404
 
             status, broad_files = request(port, args.agent_token, "GET", "/v1/files")
             assert status == 403

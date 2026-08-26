@@ -656,6 +656,40 @@ enum FileScope: String, CaseIterable, Identifiable {
     }
 }
 
+struct FileScopeDescriptor: Codable, Identifiable, Equatable {
+    var id: String
+    var root: String
+    var read: Bool
+    var write: Bool
+    var maxReadBytes: Int
+    var maxWriteBytes: Int
+}
+
+struct FileScopeCatalog: Codable, Equatable {
+    var schemaVersion: Int
+    var scopes: [FileScopeDescriptor]
+}
+
+struct FileEntryDescriptor: Codable, Identifiable, Equatable {
+    var name: String
+    var kind: String
+    var size: UInt64
+    var mode: UInt32
+    var modifiedAt: Int64
+
+    var id: String { name }
+    var isDirectory: Bool { kind == "directory" }
+    var isSymlink: Bool { kind == "symlink" }
+}
+
+struct FileListPayload: Codable, Equatable {
+    var schemaVersion: Int
+    var scope: String
+    var path: String
+    var entries: [FileEntryDescriptor]
+    var count: Int
+}
+
 enum ToolKind: String, CaseIterable, Identifiable {
     case performance
     case runtime

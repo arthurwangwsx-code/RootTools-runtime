@@ -39,7 +39,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.19.0"
+#define VERSION "0.20.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1451,6 +1451,26 @@ static int safe_file_name(const char *value) {
     return strstr(value,"..") == NULL;
 }
 
+static int safe_relative_path(const char *value, int allow_empty) {
+    size_t n=value?strlen(value):0;
+    if(!n)return allow_empty;
+    if(n>512||value[0]=='/'||value[n-1]=='/')return 0;
+    size_t segment_start=0;
+    int depth=0;
+    for(size_t i=0;i<=n;i++){
+        if(i<n&&value[i]!='/')continue;
+        size_t length=i-segment_start;
+        if(length<1||length>96||depth>=8)return 0;
+        char segment[97]={0};
+        memcpy(segment,value+segment_start,length);
+        segment[length]=0;
+        if(!safe_file_name(segment))return 0;
+        depth++;
+        segment_start=i+1;
+    }
+    return 1;
+}
+
 static int safe_request_id(const char *value) {
     size_t n=strlen(value); if(n<1||n>120)return 0;
     for(size_t i=0;i<n;i++) if(!(isalnum((unsigned char)value[i])||value[i]=='.'||value[i]=='-'||value[i]=='_')) return 0;
@@ -1472,10 +1492,43 @@ static int executable_for_bundle(const char *bundle_id, char *out, size_t cap) {
     memcpy(out,p,n); out[n]=0; return strchr(out,'/')==NULL && strchr(out,'\r')==NULL;
 }
 
-static int build_file_path(const char *scope, const char *name, char *out, size_t cap) {
-    if(!safe_file_name(name))return 0; ensure_action_dirs();
-    if(!strcmp(scope,"mobile")){snprintf(out,cap,"%s/%s",mobile_scope_root(),name);return 1;}
-    if(!strcmp(scope,"bootstrap")){snprintf(out,cap,"%s/%s",bootstrap_scope_root(),name);return 1;}
+static int open_scope_directory_fd(const char *scope, const char *relative_path) {
+    const char *root=NULL;
+    if(!strcmp(scope,"mobile"))root=mobile_scope_root();
+    else if(!strcmp(scope,"bootstrap"))root=bootstrap_scope_root();
+    if(!root||!safe_relative_path(relative_path,1))return -1;
+    ensure_action_dirs();
+    int current=open(root,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+    if(current<0)return -1;
+    if(!relative_path[0])return current;
+    char copy[513]={0};snprintf(copy,sizeof(copy),"%s",relative_path);
+    char *save=NULL;
+    for(char *segment=strtok_r(copy,"/",&save);segment;segment=strtok_r(NULL,"/",&save)){
+        int next=openat(current,segment,O_RDONLY|O_DIRECTORY|O_NOFOLLOW);
+        close(current);
+        if(next<0)return -1;
+        current=next;
+    }
+    return current;
+}
+
+static int open_scope_parent_fd(const char *scope, const char *relative_path, char *leaf, size_t leaf_cap) {
+    if(!safe_relative_path(relative_path,0)||!leaf||leaf_cap<2)return -1;
+    const char *slash=strrchr(relative_path,'/');
+    if(!slash){
+        snprintf(leaf,leaf_cap,"%s",relative_path);
+        return open_scope_directory_fd(scope,"");
+    }
+    size_t parent_len=(size_t)(slash-relative_path);
+    if(parent_len>=513||strlen(slash+1)>=leaf_cap)return -1;
+    char parent[513]={0};memcpy(parent,relative_path,parent_len);parent[parent_len]=0;
+    snprintf(leaf,leaf_cap,"%s",slash+1);
+    return open_scope_directory_fd(scope,parent);
+}
+
+static int request_relative_path(const char *body, char *out, size_t cap) {
+    if(json_get_string(body,"path",out,cap))return safe_relative_path(out,0);
+    if(json_get_string(body,"name",out,cap))return safe_relative_path(out,0);
     return 0;
 }
 
@@ -1735,24 +1788,28 @@ static const char *file_scope_root(const char *scope) {
 }
 
 static void send_fs_list(int fd, const char *body) {
-    char scope[32]={0};
+    char scope[32]={0},relative[513]={0};
     if(!json_get_string(body,"scope",scope,sizeof(scope))){send_error(fd,400,"scope is required");return;}
     const char *root=file_scope_root(scope); if(!root){send_error(fd,400,"unknown file scope");return;}
-    ensure_action_dirs(); DIR *dir=opendir(root); if(!dir){send_error(fd,503,"file scope unavailable");return;}
+    if(json_has_key(body,"path")&&!json_get_string(body,"path",relative,sizeof(relative))){send_error(fd,400,"path must be a string");return;}
+    if(!safe_relative_path(relative,1)){send_error(fd,400,"path is outside the declared file scope");return;}
+    int directory_fd=open_scope_directory_fd(scope,relative);
+    if(directory_fd<0){send_error(fd,404,"directory is unavailable or not traversable");return;}
+    DIR *dir=fdopendir(directory_fd); if(!dir){close(directory_fd);send_error(fd,503,"file scope unavailable");return;}
     char *response=calloc(1,49152); if(!response){closedir(dir);send_error(fd,500,"file list allocation failed");return;}
-    size_t used=0; int row=0; int n=snprintf(response,49152,"{\"schemaVersion\":1,\"scope\":\"%s\",\"entries\":[",scope);
+    char escaped_path[1026]={0};json_escape(relative,escaped_path,sizeof(escaped_path));
+    size_t used=0; int row=0; int n=snprintf(response,49152,"{\"schemaVersion\":2,\"scope\":\"%s\",\"path\":\"%s\",\"entries\":[",scope,escaped_path);
     if(n<0){free(response);closedir(dir);send_error(fd,500,"file list encoding failed");return;} used=(size_t)n;
     struct dirent *entry;
     while((entry=readdir(dir))&&row<256){
         if(!strcmp(entry->d_name,".")||!strcmp(entry->d_name,".."))continue;
         if(!safe_file_name(entry->d_name))continue;
-        char path[1024]={0}; snprintf(path,sizeof(path),"%s/%s",root,entry->d_name);
-        struct stat st; if(lstat(path,&st)!=0)continue;
+        struct stat st; if(fstatat(dirfd(dir),entry->d_name,&st,AT_SYMLINK_NOFOLLOW)!=0)continue;
         char escaped[256]={0}; json_escape(entry->d_name,escaped,sizeof(escaped));
         const char *kind=S_ISDIR(st.st_mode)?"directory":S_ISLNK(st.st_mode)?"symlink":"file";
         n=snprintf(response+used,49152-used,
-            "%s{\"name\":\"%s\",\"kind\":\"%s\",\"size\":%llu,\"mode\":%u}",
-            row?",":"",escaped,kind,(unsigned long long)st.st_size,(unsigned int)(st.st_mode&07777));
+            "%s{\"name\":\"%s\",\"kind\":\"%s\",\"size\":%llu,\"mode\":%u,\"modifiedAt\":%lld}",
+            row?",":"",escaped,kind,(unsigned long long)st.st_size,(unsigned int)(st.st_mode&07777),(long long)st.st_mtime);
         if(n<0||(size_t)n>=49152-used)break; used+=(size_t)n; row++;
         if(used>46000)break;
     }
@@ -2379,15 +2436,6 @@ static int wait_pid_gone(pid_t pid) {
     return !process_info(pid,NULL,NULL,0);
 }
 
-static int verify_file_contents(const char *path, const char *expected) {
-    int in=open(path,O_RDONLY|O_NOFOLLOW); if(in<0)return 0;
-    struct stat st; if(fstat(in,&st)!=0||st.st_size<0||st.st_size>16384){close(in);return 0;}
-    size_t expected_len=strlen(expected); if((size_t)st.st_size!=expected_len){close(in);return 0;}
-    char *buffer=calloc(1,expected_len+1); if(!buffer){close(in);return 0;}
-    ssize_t n=read(in,buffer,expected_len); close(in);
-    int ok=n==(ssize_t)expected_len&&!memcmp(buffer,expected,expected_len); free(buffer); return ok;
-}
-
 static void execute_app_launch(const char *body, RTActionExecution *execution) {
     char bundle[256]={0}, executable[256]={0};
     if(!json_get_string(body,"bundleID",bundle,sizeof(bundle))||!safe_bundle_id(bundle)){
@@ -2436,14 +2484,19 @@ static void execute_process_terminate(const char *body, RTActionExecution *execu
 }
 
 static void execute_file_write(const char *body, RTActionExecution *execution) {
-    char scope[32]={0},name[128]={0},content[20000]={0},path[1024]={0};
-    if(!json_get_string(body,"scope",scope,sizeof(scope))||!json_get_string(body,"name",name,sizeof(name))||!json_get_string(body,"content",content,sizeof(content))){snprintf(execution->target,sizeof(execution->target),"invalid file request");snprintf(execution->message,sizeof(execution->message),"Missing file fields");return;}
-    if(strlen(content)>16384||!build_file_path(scope,name,path,sizeof(path))){snprintf(execution->target,sizeof(execution->target),"%s/%s",scope,name);snprintf(execution->message,sizeof(execution->message),"File request outside allowed RootTools scope");return;}
-    snprintf(execution->target,sizeof(execution->target),"%s",path);
+    char scope[32]={0},relative[513]={0},leaf[128]={0},content[20000]={0};
+    if(!json_get_string(body,"scope",scope,sizeof(scope))||!request_relative_path(body,relative,sizeof(relative))||!json_get_string(body,"content",content,sizeof(content))){snprintf(execution->target,sizeof(execution->target),"invalid file request");snprintf(execution->message,sizeof(execution->message),"Missing or invalid file fields");return;}
+    if(strlen(content)>16384){snprintf(execution->target,sizeof(execution->target),"%s:%s",scope,relative);snprintf(execution->message,sizeof(execution->message),"File exceeds 16 KiB write limit");return;}
+    int parent=open_scope_parent_fd(scope,relative,leaf,sizeof(leaf));
+    if(parent<0){snprintf(execution->target,sizeof(execution->target),"%s:%s",scope,relative);snprintf(execution->message,sizeof(execution->message),"File request outside allowed RootTools scope");return;}
+    snprintf(execution->target,sizeof(execution->target),"%s:%s",scope,relative);
     execution->executed=1;
-    int out=open(path,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0640); if(out<0){snprintf(execution->message,sizeof(execution->message),"Write failed: %s",strerror(errno));return;}
+    int out=openat(parent,leaf,O_WRONLY|O_CREAT|O_TRUNC|O_NOFOLLOW,0640); if(out<0){close(parent);snprintf(execution->message,sizeof(execution->message),"Write failed: %s",strerror(errno));return;}
     size_t len=strlen(content); ssize_t n=write(out,content,len); fsync(out); close(out);
-    execution->post_checked=1; execution->post_passed=n==(ssize_t)len&&verify_file_contents(path,content);
+    int verify=openat(parent,leaf,O_RDONLY|O_NOFOLLOW);char verify_buffer[16385]={0};ssize_t verified=-1;
+    if(verify>=0){verified=read(verify,verify_buffer,sizeof(verify_buffer)-1);close(verify);}
+    close(parent);
+    execution->post_checked=1; execution->post_passed=n==(ssize_t)len&&verified==(ssize_t)len&&!memcmp(verify_buffer,content,len);
     snprintf(execution->post_detail,sizeof(execution->post_detail),execution->post_passed?"read-back matched %zu bytes":"read-back mismatch",len);
     execution->ok=n==(ssize_t)len&&execution->post_passed;
     snprintf(execution->result,sizeof(execution->result),execution->ok?"success":"failed");
@@ -2451,12 +2504,14 @@ static void execute_file_write(const char *body, RTActionExecution *execution) {
 }
 
 static void execute_file_read(const char *body, RTActionExecution *execution) {
-    char scope[32]={0},name[128]={0},path[1024]={0};
-    if(!json_get_string(body,"scope",scope,sizeof(scope))||!json_get_string(body,"name",name,sizeof(name))||!build_file_path(scope,name,path,sizeof(path))){snprintf(execution->target,sizeof(execution->target),"invalid file request");snprintf(execution->message,sizeof(execution->message),"File request outside allowed RootTools scope");return;}
-    snprintf(execution->target,sizeof(execution->target),"%s",path);
+    char scope[32]={0},relative[513]={0},leaf[128]={0};
+    if(!json_get_string(body,"scope",scope,sizeof(scope))||!request_relative_path(body,relative,sizeof(relative))){snprintf(execution->target,sizeof(execution->target),"invalid file request");snprintf(execution->message,sizeof(execution->message),"File request outside allowed RootTools scope");return;}
+    int parent=open_scope_parent_fd(scope,relative,leaf,sizeof(leaf));
+    if(parent<0){snprintf(execution->target,sizeof(execution->target),"%s:%s",scope,relative);snprintf(execution->message,sizeof(execution->message),"File request outside allowed RootTools scope");return;}
+    snprintf(execution->target,sizeof(execution->target),"%s:%s",scope,relative);
     execution->executed=1;
-    int in=open(path,O_RDONLY|O_NOFOLLOW); if(in<0){snprintf(execution->message,sizeof(execution->message),"File not found");return;}
-    struct stat st; if(fstat(in,&st)!=0||st.st_size<0||st.st_size>32768){close(in);snprintf(execution->message,sizeof(execution->message),"File is unavailable or exceeds 32 KiB");return;}
+    int in=openat(parent,leaf,O_RDONLY|O_NOFOLLOW);close(parent); if(in<0){snprintf(execution->message,sizeof(execution->message),"File not found or symlink access denied");return;}
+    struct stat st; if(fstat(in,&st)!=0||!S_ISREG(st.st_mode)||st.st_size<0||st.st_size>32768){close(in);snprintf(execution->message,sizeof(execution->message),"File is unavailable, not regular, or exceeds 32 KiB");return;}
     char *raw=calloc(1,(size_t)st.st_size+2); ssize_t n=read(in,raw,(size_t)st.st_size+1); close(in); if(n<0){free(raw);snprintf(execution->message,sizeof(execution->message),"File read failed");return;} raw[n]=0;
     execution->output=raw; execution->post_checked=1; execution->post_passed=1; execution->ok=1;
     snprintf(execution->result,sizeof(execution->result),"success"); snprintf(execution->post_detail,sizeof(execution->post_detail),"bounded read completed"); snprintf(execution->message,sizeof(execution->message),"Read allowed RootTools file");

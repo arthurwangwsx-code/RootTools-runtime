@@ -53,6 +53,8 @@ The `v0.18.0` line adds a read-only installed-package inventory backed by the ro
 
 The `v0.19.0` line adds Remote Worker Mode for long-running device automation. The UID 0 daemon owns a bounded R2 policy for idle-display assertion, low-brightness target, battery/temperature telemetry and thermal gating. UI tasks pause when the battery is too warm or thermal telemetry is unavailable; RootTools never bypasses the passcode. Charging mutation remains fail-closed unless a reversible device-specific charge-control path is explicitly verified.
 
+The `v0.20.0` line turns the declared RootTools filesystem scopes into a product-level Files Manager. Nested paths are resolved relative to fixed `mobile`/`bootstrap` roots with per-segment validation and `openat`/`O_NOFOLLOW` traversal. The app can browse directories, inspect file metadata, create bounded text files and read/edit bounded UTF-8-oriented text content without exposing an arbitrary root path or following symlinks.
+
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 
 ## Build and install

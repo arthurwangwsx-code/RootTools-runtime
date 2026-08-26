@@ -181,8 +181,8 @@ class DeviceServiceClient:
     def fs_scopes(self) -> dict:
         return self.request("GET", "/v1/fs/scopes")
 
-    def fs_list(self, scope: str) -> dict:
-        return self.request("POST", "/v1/fs/list", {"scope": scope})
+    def fs_list(self, scope: str, path: str = "") -> dict:
+        return self.request("POST", "/v1/fs/list", {"scope": scope, "path": path})
 
     def screen_info(self) -> dict:
         return self.request("GET", "/v1/ui/screen-info")
@@ -520,6 +520,7 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("fs-scopes")
     fs_list = sub.add_parser("fs-list")
     fs_list.add_argument("scope", choices=("mobile", "bootstrap"))
+    fs_list.add_argument("path", nargs="?", default="", help="Relative path inside the declared scope")
     sub.add_parser("screen-info")
     sub.add_parser("ui-observe")
     ui_tap = sub.add_parser("ui-tap", help="Queue a semantic screen tap task")
@@ -572,10 +573,10 @@ def build_parser() -> argparse.ArgumentParser:
 
     read = sub.add_parser("file-read")
     read.add_argument("scope", choices=("mobile", "bootstrap"))
-    read.add_argument("name")
+    read.add_argument("path", help="Relative path inside the declared scope")
     write = sub.add_parser("file-write")
     write.add_argument("scope", choices=("mobile", "bootstrap"))
-    write.add_argument("name")
+    write.add_argument("path", help="Relative path inside the declared scope")
     write_group = write.add_mutually_exclusive_group(required=True)
     write_group.add_argument("--content")
     write_group.add_argument("--content-file", type=Path)
@@ -667,7 +668,7 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
     if args.command == "fs-scopes":
         return client.fs_scopes()
     if args.command == "fs-list":
-        return client.fs_list(args.scope)
+        return client.fs_list(args.scope, args.path)
     if args.command == "screen-info":
         return client.screen_info()
     if args.command == "ui-observe":
@@ -729,14 +730,14 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
     if args.command == "agent-rotate":
         return client.action("device.agent.rotate", {}, args.confirm, args.request_id, args.expected_revision)
     if args.command == "file-read":
-        return client.action("device.fs.read", {"scope": args.scope, "name": args.name}, request_id=args.request_id, expected_revision=args.expected_revision)
+        return client.action("device.fs.read", {"scope": args.scope, "path": args.path}, request_id=args.request_id, expected_revision=args.expected_revision)
     if args.command == "file-write":
         content = args.content
         if args.content_file:
             content = args.content_file.read_text()
         return client.action(
             "device.fs.write",
-            {"scope": args.scope, "name": args.name, "content": content},
+            {"scope": args.scope, "path": args.path, "content": content},
             request_id=args.request_id,
             expected_revision=args.expected_revision,
         )

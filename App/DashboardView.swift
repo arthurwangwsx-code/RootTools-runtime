@@ -524,6 +524,8 @@ private struct RootToolDestination: View {
             ApplicationsManagerView()
         } else if tool == .processes {
             ProcessesManagerView()
+        } else if tool == .files {
+            FilesManagerView()
         } else if tool == .capabilities {
             CapabilitiesView()
         } else if tool == .providers {

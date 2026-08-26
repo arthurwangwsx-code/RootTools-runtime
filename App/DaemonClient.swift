@@ -24,7 +24,7 @@ private struct ProcessActionBody: Codable {
 private struct FileReadBody: Codable {
     var capabilityId: String
     var scope: String
-    var name: String
+    var path: String
     var requestId: String
     var caller: String
     var confirmed: Bool
@@ -33,7 +33,7 @@ private struct FileReadBody: Codable {
 private struct FileWriteBody: Codable {
     var capabilityId: String
     var scope: String
-    var name: String
+    var path: String
     var content: String
     var requestId: String
     var caller: String
@@ -595,6 +595,20 @@ final class DaemonClient {
         return payload.process
     }
 
+    func fileScopes() async throws -> FileScopeCatalog {
+        let data = try await request(path: "/v1/fs/scopes")
+        return try decoder.decode(FileScopeCatalog.self, from: data)
+    }
+
+    func listFiles(scope: FileScope, path: String = "") async throws -> FileListPayload {
+        struct Body: Encodable { var scope: String; var path: String }
+        return try await post(
+            path: "/v1/fs/list",
+            body: Body(scope: scope.rawValue, path: path),
+            response: FileListPayload.self
+        )
+    }
+
     func processCatalog() async throws -> ProcessCatalog {
         let data = try await request(path: "/v1/processes/catalog", timeout: 10)
         return try decoder.decode(ProcessCatalog.self, from: data)
@@ -758,10 +772,14 @@ final class DaemonClient {
     }
 
     func writeFile(scope: FileScope, name: String, content: String) async throws -> ActionReceipt {
+        try await writeFile(scope: scope, path: name, content: content)
+    }
+
+    func writeFile(scope: FileScope, path: String, content: String) async throws -> ActionReceipt {
         try await post(
             path: "/v1/commands/submit",
             body: FileWriteBody(
-                capabilityId: "device.fs.write", scope: scope.rawValue, name: name, content: content,
+                capabilityId: "device.fs.write", scope: scope.rawValue, path: path, content: content,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
             ),
             response: ActionReceipt.self
@@ -769,10 +787,14 @@ final class DaemonClient {
     }
 
     func readFile(scope: FileScope, name: String) async throws -> ActionReceipt {
+        try await readFile(scope: scope, path: name)
+    }
+
+    func readFile(scope: FileScope, path: String) async throws -> ActionReceipt {
         try await post(
             path: "/v1/commands/submit",
             body: FileReadBody(
-                capabilityId: "device.fs.read", scope: scope.rawValue, name: name,
+                capabilityId: "device.fs.read", scope: scope.rawValue, path: path,
                 requestId: UUID().uuidString, caller: caller, confirmed: false
             ),
             response: ActionReceipt.self
