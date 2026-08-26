@@ -26,7 +26,7 @@ import uuid
 from usbmux_proxy import discover_udid, port_forward
 
 
-DEVICE_PORT = 45821
+DEVICE_PORT = int(os.environ.get("ROOTTOOLS_DEVICE_PORT", "45821"))
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_AGENT_TOKEN = ROOT / ".roottools-agent-token"
 DEFAULT_ADMIN_TOKEN = ROOT / ".roottools-token"
@@ -111,6 +111,9 @@ class DeviceServiceClient:
 
     def performance(self) -> dict:
         return self.request("GET", "/v1/performance")
+
+    def remote_worker(self) -> dict:
+        return self.request("GET", "/v1/remote-worker")
 
     def hello(self) -> dict:
         return self.request("GET", "/v1/hello")
@@ -260,6 +263,32 @@ class DeviceServiceClient:
     def set_policy_mode(self, mode: str, confirmed: bool) -> dict:
         return self.action("device.policy.set-mode", {"mode": mode}, confirmed=confirmed)
 
+    def configure_remote_worker(
+        self,
+        *,
+        enabled: bool,
+        dim_percent: int,
+        charge_floor_percent: int,
+        charge_ceiling_percent: int,
+        thermal_pause_centi_c: int,
+        thermal_resume_centi_c: int,
+        charge_control_enabled: bool,
+        confirmed: bool,
+    ) -> dict:
+        return self.action(
+            "device.remote-worker.configure",
+            {
+                "enabled": enabled,
+                "dimPercent": dim_percent,
+                "chargeFloorPercent": charge_floor_percent,
+                "chargeCeilingPercent": charge_ceiling_percent,
+                "thermalPauseCentiC": thermal_pause_centi_c,
+                "thermalResumeCentiC": thermal_resume_centi_c,
+                "chargeControlEnabled": charge_control_enabled,
+            },
+            confirmed=confirmed,
+        )
+
     def grant_all_principal(self, principal_id: str, confirmed: bool) -> dict:
         catalog = self.capabilities().get("capabilities", [])
         grantable = [item["id"] for item in catalog if item.get("risk") in {"R0", "R1"} and item.get("hardEnabled", item.get("enabled", False))]
@@ -404,6 +433,18 @@ def build_parser() -> argparse.ArgumentParser:
     sub.add_parser("hello")
     sub.add_parser("status")
     sub.add_parser("performance")
+    sub.add_parser("remote-worker", help="Read always-on display, battery, power and thermal state")
+    remote_worker_set = sub.add_parser("remote-worker-set", help="R2 owner action: configure always-on Remote Worker Mode")
+    remote_worker_mode = remote_worker_set.add_mutually_exclusive_group(required=True)
+    remote_worker_mode.add_argument("--enable", action="store_true")
+    remote_worker_mode.add_argument("--disable", action="store_true")
+    remote_worker_set.add_argument("--dim-percent", type=int, default=1)
+    remote_worker_set.add_argument("--charge-floor", type=int, default=70)
+    remote_worker_set.add_argument("--charge-ceiling", type=int, default=80)
+    remote_worker_set.add_argument("--thermal-pause-c", type=float, default=40.0)
+    remote_worker_set.add_argument("--thermal-resume-c", type=float, default=37.0)
+    remote_worker_set.add_argument("--charge-control", action="store_true", help="Enable reversible PredictiveChargingInhibit guard")
+    remote_worker_set.add_argument("--confirm", action="store_true", required=True)
     sub.add_parser("capabilities")
     sub.add_parser("providers")
     sub.add_parser("policy")
@@ -548,6 +589,19 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
         return client.status()
     if args.command == "performance":
         return client.performance()
+    if args.command == "remote-worker":
+        return client.remote_worker()
+    if args.command == "remote-worker-set":
+        return client.configure_remote_worker(
+            enabled=args.enable and not args.disable,
+            dim_percent=args.dim_percent,
+            charge_floor_percent=args.charge_floor,
+            charge_ceiling_percent=args.charge_ceiling,
+            thermal_pause_centi_c=int(round(args.thermal_pause_c * 100)),
+            thermal_resume_centi_c=int(round(args.thermal_resume_c * 100)),
+            charge_control_enabled=args.charge_control,
+            confirmed=args.confirm,
+        )
     if args.command == "capabilities":
         return client.capabilities()
     if args.command == "providers":

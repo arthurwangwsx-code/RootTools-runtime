@@ -35,6 +35,7 @@ typedef struct {
 static const RTProviderBinding kBindings[] = {
     {"device.status.observe", "roottools.execd"},
     {"device.performance.observe", "ios.darwin"},
+    {"device.remote-worker.observe", "roottools.execd"},
     {"device.runtime.observe", "jailbreak.dopamine"},
     {"device.runtime.adapters", "roottools.execd"},
     {"device.runtime.frida.observe", "runtime.frida"},
@@ -87,6 +88,7 @@ static const RTProviderBinding kBindings[] = {
     {"device.principal.grant", "roottools.execd"},
     {"device.principal.ungrant", "roottools.execd"},
     {"device.policy.set-mode", "roottools.execd"},
+    {"device.remote-worker.configure", "roottools.execd"},
     {"device.package.install-deb", "bootstrap.procursus"},
     {"device.package.install-ipa", "package.trollstore"},
     {"device.package.rollback-deb", "bootstrap.procursus"},

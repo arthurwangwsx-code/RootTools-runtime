@@ -34,11 +34,12 @@
 #include "package_controller.h"
 #include "principal_store.h"
 #include "provider_registry.h"
+#include "remote_worker_controller.h"
 #include "runtime_observer.h"
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.18.0"
+#define VERSION "0.19.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -57,6 +58,12 @@ static void send_error(int fd, int code, const char *message);
 
 static unsigned long audit_counter = 0;
 static unsigned long request_counter = 0;
+static volatile sig_atomic_t daemon_running = 1;
+
+static void handle_termination_signal(int signal_number) {
+    (void)signal_number;
+    daemon_running = 0;
+}
 
 static int listen_port(void) {
     const char *override=getenv("ROOTTOOLS_PORT");
@@ -1813,6 +1820,13 @@ static void send_performance(int fd) {
     send_response(fd,200,"application/json",response);
 }
 
+static void send_remote_worker(int fd) {
+    char *response = rt_remote_worker_json();
+    if (!response) { send_error(fd, 503, "remote worker state unavailable"); return; }
+    send_response(fd, 200, "application/json", response);
+    free(response);
+}
+
 static void send_runtime_catalog(int fd) {
     int dopamine=0; char *process_snapshot=processes_text(&dopamine); free(process_snapshot);
     int rootless=access("/var/jb",F_OK)==0;
@@ -2026,7 +2040,7 @@ static void send_hello(int fd, RTAuthRole role, const char *caller) {
         "{\"service\":\"roottools.device-service\",\"schemaVersion\":%d,\"daemonVersion\":\"%s\","
         "\"authenticatedRole\":\"%s\",\"authenticatedCaller\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
-        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"permissionProfiles\":true,\"developerMode\":true,\"performanceSnapshot\":true,\"durableIdempotency\":true,"
+        "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"permissionProfiles\":true,\"developerMode\":true,\"performanceSnapshot\":true,\"remoteWorkerMode\":true,\"durableIdempotency\":true,"
         "\"expectedRevision\":true,\"eventAudit\":true,\"durableTasks\":true,\"semanticUIAutomation\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
         SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),escaped_caller,machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
@@ -2695,6 +2709,56 @@ static void execute_policy_set_mode(const char *body, RTActionExecution *executi
     snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?"mode=%s previous=%s":"policy mode verification failed",mode,before[0]?before:"unknown");
 }
 
+static void execute_remote_worker_configure(const char *body, RTActionExecution *execution) {
+    RTRemoteWorkerState before=rt_remote_worker_state();
+    RTRemoteWorkerConfig config=before.config;
+    int enabled=0,charge_control_enabled=0;
+    long dim_percent=0,charge_floor=0,charge_ceiling=0,thermal_pause=0,thermal_resume=0;
+    if(!json_get_bool(body,"enabled",&enabled)||
+       !json_get_bool(body,"chargeControlEnabled",&charge_control_enabled)||
+       !json_get_int(body,"dimPercent",&dim_percent)||
+       !json_get_int(body,"chargeFloorPercent",&charge_floor)||
+       !json_get_int(body,"chargeCeilingPercent",&charge_ceiling)||
+       !json_get_int(body,"thermalPauseCentiC",&thermal_pause)||
+       !json_get_int(body,"thermalResumeCentiC",&thermal_resume)){
+        snprintf(execution->target,sizeof(execution->target),"remote-worker");
+        snprintf(execution->message,sizeof(execution->message),"Complete remote worker configuration is required");
+        return;
+    }
+    config.enabled=enabled;
+    config.charge_control_enabled=charge_control_enabled;
+    config.dim_percent=(int)dim_percent;
+    config.charge_floor_percent=(int)charge_floor;
+    config.charge_ceiling_percent=(int)charge_ceiling;
+    config.thermal_pause_centi_c=(int)thermal_pause;
+    config.thermal_resume_centi_c=(int)thermal_resume;
+    snprintf(execution->target,sizeof(execution->target),
+        "enabled=%d dim=%d%% charge=%d-%d%% thermal=%d.%02d-%d.%02dC chargeControl=%d",
+        config.enabled,config.dim_percent,config.charge_floor_percent,config.charge_ceiling_percent,
+        config.thermal_resume_centi_c/100,abs(config.thermal_resume_centi_c%100),
+        config.thermal_pause_centi_c/100,abs(config.thermal_pause_centi_c%100),
+        config.charge_control_enabled);
+    execution->executed=1;
+    char error[256]={0};
+    int persisted=rt_remote_worker_configure(&config,error,sizeof(error));
+    RTRemoteWorkerState after=rt_remote_worker_state();
+    execution->post_checked=1;
+    execution->post_passed=persisted&&
+        after.config.enabled==config.enabled&&
+        after.config.dim_percent==config.dim_percent&&
+        after.config.charge_floor_percent==config.charge_floor_percent&&
+        after.config.charge_ceiling_percent==config.charge_ceiling_percent&&
+        after.config.thermal_pause_centi_c==config.thermal_pause_centi_c&&
+        after.config.thermal_resume_centi_c==config.thermal_resume_centi_c&&
+        after.config.charge_control_enabled==config.charge_control_enabled;
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?"success":"failed");
+    snprintf(execution->message,sizeof(execution->message),"%s",
+        execution->ok?"Remote Worker configuration persisted and applied":(error[0]?error:"Remote Worker configuration failed verification"));
+    snprintf(execution->post_detail,sizeof(execution->post_detail),"%s",
+        execution->ok?(after.config.enabled?"remote worker policy is active":"remote worker policy is disabled"):"configuration read-back mismatch");
+}
+
 static int ui_text_valid(const char *text) {
     size_t length=text?strlen(text):0;
     if(!length||length>1024)return 0;
@@ -2846,6 +2910,10 @@ static void automation_tick(void) {
     if(!task_capability||!task_policy.allowed||!principal_grant_allows(caller,capability_id)){
         task_update(task_id,"failed",NULL,"task authorization no longer permits execution",0);
         if(!strcmp(kind,"app.launch"))(void)automation_update_job(task_id,"failed",NULL,"task authorization no longer permits execution",0);
+        return;
+    }
+    if(requires_ui&&!rt_remote_worker_ui_allowed()){
+        if(strcmp(state,"waiting_for_unlock"))task_update(task_id,"waiting_for_unlock",NULL,"waiting for Remote Worker thermal guard to recover",0);
         return;
     }
     if(requires_ui&&!ui_execution_ready(snapshot)){
@@ -3013,6 +3081,7 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"principal.grant")) execute_principal_grant(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"principal.ungrant")) execute_principal_ungrant(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"policy.set-mode")) execute_policy_set_mode(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"remote-worker.configure")) execute_remote_worker_configure(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.queue-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"task.submit-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,context.caller,trusted_confirmation_source,&execution);
@@ -3096,6 +3165,7 @@ static void handle(int fd) {
         send_response(fd, 200, "application/json", response); free(req); return;
     }
     if (!strcmp(method,"GET") && !strcmp(path, "/v1/performance")) { if(authorize_read_capability(fd,"device.performance.observe",caller)) send_performance(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/remote-worker")) { if(authorize_read_capability(fd,"device.remote-worker.observe",caller)) send_remote_worker(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime")) { if(authorize_read_capability(fd,"device.runtime.observe",caller)) send_text_payload(fd, runtime_text()); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/catalog")) { if(authorize_read_capability(fd,"device.runtime.adapters",caller)) send_runtime_catalog(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/frida")) { if(authorize_read_capability(fd,"device.runtime.frida.observe",caller)) send_frida_status(fd); }
@@ -3152,20 +3222,27 @@ static void handle(int fd) {
 
 int main(void) {
     setenv("PATH","/var/jb/bin:/var/jb/usr/bin:/var/jb/sbin:/var/jb/usr/sbin:/usr/bin:/bin:/usr/sbin:/sbin",1);
+    signal(SIGTERM,handle_termination_signal);
+    signal(SIGINT,handle_termination_signal);
     ensure_action_dirs();
     automation_recover_incomplete_jobs();
     task_recover_incomplete();
+    rt_remote_worker_init();
     int s = socket(AF_INET, SOCK_STREAM, 0); if (s < 0) return 2;
     fcntl(s,F_SETFD,FD_CLOEXEC);
     int one=1; setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
     struct sockaddr_in addr={0}; addr.sin_family=AF_INET; addr.sin_port=htons(listen_port()); addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
     if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) != 0) return 3;
     if (listen(s, 16) != 0) return 4;
-    for (;;) {
+    while (daemon_running) {
         fd_set rfds; FD_ZERO(&rfds); FD_SET(s,&rfds); struct timeval tv={.tv_sec=1,.tv_usec=0};
         int ready=select(s+1,&rfds,NULL,NULL,&tv);
         if(ready>0&&FD_ISSET(s,&rfds)){int c=accept(s,NULL,NULL);if(c>=0){handle(c);close(c);}}
+        rt_remote_worker_tick();
         automation_tick();
         self_update_tick();
     }
+    close(s);
+    rt_remote_worker_shutdown();
+    return 0;
 }

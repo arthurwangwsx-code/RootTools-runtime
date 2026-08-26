@@ -104,6 +104,7 @@ def main() -> int:
         dpkg_status = temp_path / "dpkg-status"
         update_db = temp_path / "self-update.sqlite3"
         principal_db = temp_path / "principals.sqlite3"
+        remote_worker_state = temp_path / "remote-worker.conf"
         system_apps_root = temp_path / "system-apps"
         jailbreak_apps_root = temp_path / "jailbreak-apps"
         user_apps_root = temp_path / "user-apps"
@@ -160,11 +161,22 @@ def main() -> int:
             "ROOTTOOLS_DPKG_STATUS": str(dpkg_status),
             "ROOTTOOLS_UPDATE_DB": str(update_db),
             "ROOTTOOLS_PRINCIPAL_DB": str(principal_db),
+            "ROOTTOOLS_REMOTE_WORKER_STATE_PATH": str(remote_worker_state),
             "ROOTTOOLS_SYSTEM_APPS_ROOT": str(system_apps_root),
             "ROOTTOOLS_JAILBREAK_APPS_ROOT": str(jailbreak_apps_root),
             "ROOTTOOLS_USER_APPS_ROOT": str(user_apps_root),
             "ROOTTOOLS_TEST_LOCK_STATE": "locked",
             "ROOTTOOLS_TEST_SCREEN_BLANKED": "1",
+            "ROOTTOOLS_TEST_ASSERTION_SUPPORTED": "1",
+            "ROOTTOOLS_TEST_BATTERY_PERCENT": "82",
+            "ROOTTOOLS_TEST_BATTERY_TEMPERATURE_CENTI_C": "3350",
+            "ROOTTOOLS_TEST_EXTERNAL_POWER": "1",
+            "ROOTTOOLS_TEST_IS_CHARGING": "0",
+            "ROOTTOOLS_TEST_SYSTEM_LOAD_MW": "760",
+            "ROOTTOOLS_TEST_BATTERY_CYCLE_COUNT": "924",
+            "ROOTTOOLS_TEST_FULL_CHARGE_CAPACITY_MAH": "3454",
+            "ROOTTOOLS_TEST_DESIGN_CAPACITY_MAH": "4325",
+            "ROOTTOOLS_TEST_CHARGE_CONTROL_AVAILABLE": "1",
         }
         daemon = subprocess.Popen([str(args.daemon)], env=env, stdout=subprocess.DEVNULL, stderr=subprocess.PIPE, text=True)
         try:
@@ -185,6 +197,7 @@ def main() -> int:
             assert hello["features"]["permissionProfiles"] is True
             assert hello["features"]["developerMode"] is True
             assert hello["features"]["performanceSnapshot"] is True
+            assert hello["features"]["remoteWorkerMode"] is True
             assert hello["features"]["durableIdempotency"] is True
             assert hello["features"]["durableTasks"] is True
             assert hello["features"]["semanticUIAutomation"] is True
@@ -290,6 +303,51 @@ def main() -> int:
             assert installed_fixture["section"] == "utils"
             assert installed_fixture["installedSizeKB"] == 42
             assert installed_fixture["essential"] is False
+
+            status, remote_worker = request(port, args.agent_token, "GET", "/v1/remote-worker")
+            assert status == 200
+            assert remote_worker["enabled"] is False
+            assert remote_worker["display"]["targetBrightnessPercent"] == 1
+            assert remote_worker["battery"]["percent"] == 82
+            assert remote_worker["battery"]["temperatureCentiC"] == 3350
+            assert remote_worker["battery"]["cycleCount"] == 924
+            assert remote_worker["battery"]["healthPercent"] == 79
+            assert remote_worker["power"]["systemLoadMilliwatts"] == 760
+            assert remote_worker["chargeGuard"]["enabled"] is False
+
+            remote_worker_parameters = {
+                "enabled": True,
+                "dimPercent": 1,
+                "chargeFloorPercent": 70,
+                "chargeCeilingPercent": 80,
+                "thermalPauseCentiC": 4000,
+                "thermalResumeCentiC": 3700,
+                "chargeControlEnabled": True,
+            }
+            agent_remote_worker = action(
+                port,
+                args.agent_token,
+                "device.remote-worker.configure",
+                confirmed=True,
+                parameters=remote_worker_parameters,
+            )
+            assert agent_remote_worker["ok"] is False
+            assert agent_remote_worker["result"] == "confirmation_required"
+            owner_remote_worker = action(
+                port,
+                args.admin_token,
+                "device.remote-worker.configure",
+                confirmed=True,
+                parameters=remote_worker_parameters,
+            )
+            assert owner_remote_worker["ok"] is True
+            status, remote_worker = request(port, args.admin_token, "GET", "/v1/remote-worker")
+            assert status == 200
+            assert remote_worker["enabled"] is True
+            assert remote_worker["display"]["awakeAssertionActive"] is True
+            assert remote_worker["chargeGuard"]["enabled"] is True
+            assert remote_worker["chargeGuard"]["verified"] is True
+            assert remote_worker["chargeGuard"]["inhibited"] is True
 
             status, principal_catalog = request(port, args.admin_token, "GET", "/v1/principals/catalog")
             assert status == 200

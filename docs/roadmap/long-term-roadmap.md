@@ -56,6 +56,8 @@ v0.17 deepens Device Management with version/build/source/path aware application
 
 v0.18 adds device-wide read-only Procursus/dpkg installed-package inventory. The product can search and inspect installed package metadata without converting that visibility into a generic uninstall primitive; package mutation remains limited to RootTools-managed lifecycle records.
 
+v0.19 adds the first Remote Worker operating mode for a phone acting as a durable automation node: bounded always-awake assertion, owner-configured low-brightness target, battery/thermal/power observation, hysteresis thermal pause/resume and UI-task gating. Thermal telemetry is fail-safe: if RootTools cannot prove a battery temperature signal while worker mode is enabled, it releases the display assertion and holds UI work. Charge-control mutation stays unavailable until a reversible device-specific path is physically verified.
+
 ### P3 — Jailbreak & Runtime Platform
 
 Normalize Dopamine, Procursus, launchd, Sileo, Frida, ElleKit, TrollStore, SSH, and ZXTouch behind semantic runtime capabilities. Never expose raw Frida/ElleKit scripting as a model-facing primitive.
@@ -83,6 +85,8 @@ v0.10 establishes the canonical Command Gateway, v0.11 adds named command princi
 Make the phone a durable execution node with Trigger, Workflow, Step, Run, Retry/Timeout, Result, Rollback, and battery/resource policy.
 
 v0.13 establishes the first canonical Device Task Ledger. It persists caller, capability, UI requirement, attempts and lifecycle state, recovers interrupted `running` tasks after daemon restart, and moves lock-aware app launch to the new task model. Broader task executors reuse this ledger rather than creating parallel queues.
+
+v0.19 connects resource policy to the Task Runtime: Remote Worker thermal state can gate queued UI work without weakening headless execution or bypassing device lock policy.
 
 ### P7 — Production 1.0
 

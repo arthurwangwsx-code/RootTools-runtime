@@ -113,6 +113,20 @@ private struct PolicyModeBody: Codable {
     var confirmed: Bool
 }
 
+private struct RemoteWorkerConfigureBody: Codable {
+    var capabilityId: String
+    var enabled: Bool
+    var dimPercent: Int
+    var chargeFloorPercent: Int
+    var chargeCeilingPercent: Int
+    var thermalPauseCentiC: Int
+    var thermalResumeCentiC: Int
+    var chargeControlEnabled: Bool
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
 private struct PrincipalGrantBody: Codable {
     var capabilityId: String
     var principalId: String
@@ -230,6 +244,39 @@ final class DaemonClient {
     func performance() async throws -> DevicePerformanceSnapshot {
         let data = try await request(path: "/v1/performance")
         return try decoder.decode(DevicePerformanceSnapshot.self, from: data)
+    }
+
+    func remoteWorkerState() async throws -> RemoteWorkerState {
+        let data = try await request(path: "/v1/remote-worker")
+        return try decoder.decode(RemoteWorkerState.self, from: data)
+    }
+
+    func configureRemoteWorker(
+        enabled: Bool,
+        dimPercent: Int,
+        chargeFloorPercent: Int,
+        chargeCeilingPercent: Int,
+        thermalPauseCentiC: Int,
+        thermalResumeCentiC: Int,
+        chargeControlEnabled: Bool
+    ) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: RemoteWorkerConfigureBody(
+                capabilityId: "device.remote-worker.configure",
+                enabled: enabled,
+                dimPercent: dimPercent,
+                chargeFloorPercent: chargeFloorPercent,
+                chargeCeilingPercent: chargeCeilingPercent,
+                thermalPauseCentiC: thermalPauseCentiC,
+                thermalResumeCentiC: thermalResumeCentiC,
+                chargeControlEnabled: chargeControlEnabled,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: true
+            ),
+            response: ActionReceipt.self
+        )
     }
 
     func text(path: String) async throws -> TextPayload {

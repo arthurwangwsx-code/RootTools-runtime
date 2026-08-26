@@ -29,4 +29,14 @@ targets:
         INFOPLIST_KEY_UILaunchScreen_Generation: YES
         INFOPLIST_KEY_NSAppTransportSecurity_NSAllowsLocalNetworking: YES
         ASSETCATALOG_COMPILER_APPICON_NAME: ""
+      configs:
+        Release:
+          # Keep optimized Release code, but do not force Swift whole-module
+          # compilation. RootTools is edited frequently while a physical
+          # device is attached; per-file optimized compilation is parallel and
+          # incremental, whereas WMO rebuilt every SwiftUI source for one-line
+          # changes and routinely took several minutes.
+          SWIFT_COMPILATION_MODE: singlefile
+          SWIFT_OPTIMIZATION_LEVEL: -O
+          COMPILER_INDEX_STORE_ENABLE: NO
 

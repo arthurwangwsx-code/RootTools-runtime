@@ -227,6 +227,66 @@ struct DevicePerformanceSnapshot: Codable, Equatable {
     var providers: PerformanceProviderSnapshot
 }
 
+struct RemoteWorkerDisplayState: Codable, Equatable {
+    var targetBrightnessPercent: Int
+    var strategy: String
+    var awakeAssertionSupported: Bool
+    var awakeAssertionActive: Bool
+}
+
+struct RemoteWorkerBatteryState: Codable, Equatable {
+    var available: Bool
+    var percent: Int
+    var temperatureCentiC: Int
+    var temperatureAvailable: Bool
+    var externalPowerConnected: Bool
+    var charging: Bool
+    var instantAmperageMa: Int
+    var cycleCount: Int
+    var fullChargeCapacityMah: Int
+    var designCapacityMah: Int
+    var healthPercent: Int
+}
+
+struct RemoteWorkerPowerState: Codable, Equatable {
+    var systemLoadAvailable: Bool
+    var systemLoadMilliwatts: Int
+}
+
+struct RemoteWorkerThermalState: Codable, Equatable {
+    var paused: Bool
+    var pauseCentiC: Int
+    var resumeCentiC: Int
+}
+
+struct RemoteWorkerChargeGuardState: Codable, Equatable {
+    var enabled: Bool
+    var available: Bool
+    var verified: Bool
+    var inhibited: Bool
+    var state: String
+    var floorPercent: Int
+    var ceilingPercent: Int
+}
+
+struct RemoteWorkerPolicyState: Codable, Equatable {
+    var bypassPasscode: Bool
+    var thermalMayReleaseDisplayAssertion: Bool
+    var brightnessManagedByClient: Bool
+}
+
+struct RemoteWorkerState: Codable, Equatable {
+    var schemaVersion: Int
+    var enabled: Bool
+    var mode: String
+    var display: RemoteWorkerDisplayState
+    var battery: RemoteWorkerBatteryState
+    var power: RemoteWorkerPowerState
+    var thermal: RemoteWorkerThermalState
+    var chargeGuard: RemoteWorkerChargeGuardState
+    var policy: RemoteWorkerPolicyState
+}
+
 struct ProviderDescriptor: Codable, Identifiable, Equatable {
     var id: String
     var title: String
@@ -600,6 +660,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
     case performance
     case runtime
     case uiAutomation
+    case remoteWorker
     case providers
     case packages
     case apps
@@ -619,6 +680,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .performance: return "Performance"
         case .runtime: return "Jailbreak Runtime"
         case .uiAutomation: return "UI Automation"
+        case .remoteWorker: return "Remote Worker"
         case .providers: return "Providers"
         case .packages: return "Packages"
         case .apps: return "Applications"
@@ -638,6 +700,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .performance: return "Load · memory · uptime · daemon resources"
         case .runtime: return "Dopamine · rootless · helper"
         case .uiAutomation: return "Observe · tap · type · swipe · lock-aware"
+        case .remoteWorker: return "Always-on UI · low brightness · battery guard"
         case .providers: return "Dopamine · TrollStore · Frida · UI"
         case .packages: return "DEB · IPA · TIPA staging and install"
         case .apps: return "Installed application inventory"
@@ -657,6 +720,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .performance: return "gauge.with.dots.needle.67percent"
         case .runtime: return "lock.open.fill"
         case .uiAutomation: return "hand.tap.fill"
+        case .remoteWorker: return "iphone.and.arrow.forward"
         case .providers: return "point.3.connected.trianglepath.dotted"
         case .packages: return "shippingbox.fill"
         case .apps: return "square.grid.2x2.fill"
@@ -676,6 +740,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .performance: return "/v1/performance"
         case .runtime: return "/v1/runtime"
         case .uiAutomation: return "/v1/ui/observe"
+        case .remoteWorker: return "/v1/remote-worker"
         case .providers: return "/v1/providers/catalog"
         case .packages: return "/v1/packages/catalog"
         case .apps: return "/v1/apps"

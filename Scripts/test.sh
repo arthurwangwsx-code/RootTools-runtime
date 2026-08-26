@@ -33,6 +33,10 @@ clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   -o build/tests/runtime_observer_test
 build/tests/runtime_observer_test
 clang -std=c11 -Wall -Wextra -Werror -I Daemon \
+  Tests/remote_worker_controller_test.c Daemon/remote_worker_controller.c \
+  -framework CoreFoundation -o build/tests/remote_worker_controller_test
+build/tests/remote_worker_controller_test
+clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   Tests/principal_store_test.c Daemon/principal_store.c \
   -lsqlite3 -framework CoreFoundation -o build/tests/principal_store_test
 build/tests/principal_store_test
@@ -44,6 +48,9 @@ assert catalog["schemaVersion"] == 1
 by_id={item["id"]: item for item in catalog["capabilities"]}
 assert by_id["device.app.launch"]["risk"] == "R1"
 assert by_id["device.process.terminate"]["requiresConfirmation"] is True
+assert by_id["device.remote-worker.observe"]["risk"] == "R0"
+assert by_id["device.remote-worker.configure"]["risk"] == "R2"
+assert by_id["device.remote-worker.configure"]["requiresConfirmation"] is True
 assert by_id["device.raw-shell"]["enabled"] is False
 assert catalog["invariants"] == {"r3Exposed": False, "rawPrivilegedShellExposed": False}
 '
@@ -54,7 +61,7 @@ sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     Daemon/roottools_updater.c > build/tests/roottools_updater_mac.c
 clang -std=c11 -Wall -Wextra -Werror -I Daemon \
-  build/tests/roottools_execd_mac.c Daemon/control_plane.c Daemon/provider_registry.c Daemon/package_controller.c Daemon/update_controller.c Daemon/runtime_observer.c Daemon/principal_store.c \
+  build/tests/roottools_execd_mac.c Daemon/control_plane.c Daemon/provider_registry.c Daemon/package_controller.c Daemon/update_controller.c Daemon/runtime_observer.c Daemon/remote_worker_controller.c Daemon/principal_store.c \
   -lsqlite3 -lz -framework CoreFoundation -o build/tests/roottools-execd-mac
 python3 Tests/http_contract_test.py \
   --daemon build/tests/roottools-execd-mac \
