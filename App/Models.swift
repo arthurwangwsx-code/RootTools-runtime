@@ -690,10 +690,37 @@ struct FileListPayload: Codable, Equatable {
     var count: Int
 }
 
+struct RemoteAccessTransportState: Codable, Equatable {
+    var kind: String
+    var available: Bool
+    var bindAddress: String
+    var port: Int
+    var listenerActive: Bool
+    var listenerError: String?
+}
+
+struct RemoteAccessPolicyState: Codable, Equatable {
+    var publicInternetListener: Bool
+    var ownerTokenAcceptedRemotely: Bool
+    var legacyAgentTokenAcceptedRemotely: Bool
+    var namedHostPrincipalRequired: Bool
+    var maxDurationMinutes: Int
+}
+
+struct RemoteAccessState: Codable, Equatable {
+    var schemaVersion: Int
+    var enabled: Bool
+    var principalId: String
+    var expiresAt: Int64
+    var transport: RemoteAccessTransportState
+    var policy: RemoteAccessPolicyState
+}
+
 enum ToolKind: String, CaseIterable, Identifiable {
     case performance
     case runtime
     case uiAutomation
+    case remoteAccess
     case remoteWorker
     case providers
     case packages
@@ -714,6 +741,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .performance: return "Performance"
         case .runtime: return "Jailbreak Runtime"
         case .uiAutomation: return "UI Automation"
+        case .remoteAccess: return "Remote Access"
         case .remoteWorker: return "Remote Worker"
         case .providers: return "Providers"
         case .packages: return "Packages"
@@ -734,6 +762,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .performance: return "Load · memory · uptime · daemon resources"
         case .runtime: return "Dopamine · rootless · helper"
         case .uiAutomation: return "Observe · tap · type · swipe · lock-aware"
+        case .remoteAccess: return "Owner-started Tailnet session · Host Principal only"
         case .remoteWorker: return "Always-on UI · low brightness · battery guard"
         case .providers: return "Dopamine · TrollStore · Frida · UI"
         case .packages: return "DEB · IPA · TIPA staging and install"
@@ -754,6 +783,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .performance: return "gauge.with.dots.needle.67percent"
         case .runtime: return "lock.open.fill"
         case .uiAutomation: return "hand.tap.fill"
+        case .remoteAccess: return "network.badge.shield.half.filled"
         case .remoteWorker: return "iphone.and.arrow.forward"
         case .providers: return "point.3.connected.trianglepath.dotted"
         case .packages: return "shippingbox.fill"
@@ -774,6 +804,7 @@ enum ToolKind: String, CaseIterable, Identifiable {
         case .performance: return "/v1/performance"
         case .runtime: return "/v1/runtime"
         case .uiAutomation: return "/v1/ui/observe"
+        case .remoteAccess: return "/v1/remote-access"
         case .remoteWorker: return "/v1/remote-worker"
         case .providers: return "/v1/providers/catalog"
         case .packages: return "/v1/packages/catalog"

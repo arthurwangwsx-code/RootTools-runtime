@@ -92,6 +92,23 @@ int rt_update_schedule(const char *request_id, const char *package_id, RTUpdateO
     return op->ok;
 }
 
+int rt_update_peek_pending(char *request_id, size_t cap) {
+    if(!request_id||cap<2)return 0;
+    request_id[0]=0;
+    sqlite3 *db=NULL;if(!db_open(&db))return 0;
+    sqlite3_stmt *select=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "SELECT request_id FROM self_updates WHERE state='queued' ORDER BY created_at LIMIT 1",
+        -1,&select,NULL);
+    if(rc==SQLITE_OK)rc=sqlite3_step(select);
+    int found=0;
+    if(rc==SQLITE_ROW){
+        const char *id=(const char*)sqlite3_column_text(select,0);
+        if(id&&strlen(id)<cap){snprintf(request_id,cap,"%s",id);found=1;}
+    }
+    sqlite3_finalize(select);sqlite3_close(db);return found;
+}
+
 int rt_update_claim_pending(char *request_id, size_t cap) {
     if(!request_id||cap<2)return 0;
     request_id[0]=0;

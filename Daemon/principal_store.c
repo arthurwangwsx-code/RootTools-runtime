@@ -409,6 +409,23 @@ int rt_principal_authenticate(
     return ok;
 }
 
+int rt_principal_active_kind(const char *principal_id, char *kind_out, size_t kind_cap) {
+    if(kind_out&&kind_cap)kind_out[0]=0;
+    if(!safe_id(principal_id,RT_PRINCIPAL_ID_CAP-1)||!kind_out||kind_cap<2)return 0;
+    sqlite3 *db=NULL;if(!db_open(&db))return 0;
+    sqlite3_stmt *statement=NULL;
+    int rc=sqlite3_prepare_v2(db,
+        "SELECT kind FROM principals WHERE principal_id=?1 AND state='active' LIMIT 1",
+        -1,&statement,NULL);
+    if(rc==SQLITE_OK){sqlite3_bind_text(statement,1,principal_id,-1,SQLITE_TRANSIENT);rc=sqlite3_step(statement);}
+    int found=0;
+    if(rc==SQLITE_ROW){
+        const char *kind=(const char*)sqlite3_column_text(statement,0);
+        if(kind&&strlen(kind)<kind_cap){snprintf(kind_out,kind_cap,"%s",kind);found=1;}
+    }
+    sqlite3_finalize(statement);sqlite3_close(db);return found;
+}
+
 static void json_escape(const char *input, char *out, size_t cap) {
     size_t j = 0;
     for (size_t i = 0; input && input[i] && j + 2 < cap; i++) {

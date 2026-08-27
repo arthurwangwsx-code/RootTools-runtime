@@ -217,10 +217,21 @@ static int bootstrap_daemon(void) {
     return spawn_timeout(launchctl_path(),argv,20)==0;
 }
 
-static void refresh_app(void) {
-    if(access(uicache_path(),X_OK)!=0)return;
+static int refresh_app(void) {
+    if(access(uicache_path(),X_OK)!=0)return 0;
     char *argv[]={(char*)"uicache",(char*)"-p",(char*)app_path(),NULL};
-    (void)spawn_timeout(uicache_path(),argv,30);
+    return spawn_timeout(uicache_path(),argv,30)==0;
+}
+
+static int app_registered(void) {
+    if(access(uicache_path(),X_OK)!=0)return 0;
+    char *argv[]={(char*)"uicache",(char*)"-i",(char*)"com.arthur.roottools.ios",NULL};
+    return spawn_timeout(uicache_path(),argv,15)==0;
+}
+
+static int wait_app_registered(void) {
+    for(int i=0;i<20;i++){if(app_registered())return 1;usleep(250000);}
+    return 0;
 }
 
 typedef struct {
@@ -297,23 +308,52 @@ static int run_update(const char *request_id) {
     }
     char old_version[64]={0};(void)http_version(old_version,sizeof(old_version));
     rt_update_mark(request_id,"running",target_version,"switching",NULL);
-    (void)bootout_daemon();
-    int applied=1;
-    for(int i=0;i<5;i++)if(applied&&!apply_swap(&swaps[i]))applied=0;
-    if(applied&&bootstrap_daemon()){refresh_app();if(wait_version(target_version)){
+    int bootout_ok=bootout_daemon();
+    int applied=bootout_ok;
+    int apply_failed_index=-1;
+    for(int i=0;i<5;i++){
+        if(applied&&!apply_swap(&swaps[i])){applied=0;apply_failed_index=i;}
+    }
+    int bootstrap_ok=0,app_refresh_ok=0,app_registration_ok=0,new_health_ok=0;
+    if(applied){
+        bootstrap_ok=bootstrap_daemon();
+        if(bootstrap_ok){
+            app_refresh_ok=refresh_app();
+            app_registration_ok=app_refresh_ok&&wait_app_registered();
+            new_health_ok=wait_version(target_version);
+        }
+    }
+    if(applied&&bootstrap_ok&&app_registration_ok&&new_health_ok){
         for(int i=0;i<5;i++)cleanup_swap(&swaps[i]);remove_tree(work);
         rt_package_mark_external_install(update.package_id,"self-update","roottools.updater");
-        rt_update_mark(request_id,"succeeded",target_version,"new daemon healthy",NULL);return 0;
-    }}
+        rt_update_mark(request_id,"succeeded",target_version,"new daemon and foreground app healthy",NULL);return 0;
+    }
+
+    char transition_error[512]={0};
+    if(!bootout_ok)snprintf(transition_error,sizeof(transition_error),"serving daemon bootout failed before switch");
+    else if(apply_failed_index>=0)snprintf(transition_error,sizeof(transition_error),"target swap failed at index %d",apply_failed_index);
+    else if(!bootstrap_ok)snprintf(transition_error,sizeof(transition_error),"new daemon launchd bootstrap failed");
+    else if(!app_refresh_ok)snprintf(transition_error,sizeof(transition_error),"foreground App uicache registration command failed");
+    else if(!app_registration_ok)snprintf(transition_error,sizeof(transition_error),"foreground App was not discoverable after uicache registration");
+    else snprintf(transition_error,sizeof(transition_error),"new daemon failed authenticated version health check");
+    rt_update_mark(request_id,"running",target_version,"rolling_back",transition_error);
 
     (void)bootout_daemon();
     for(int i=4;i>=0;i--)rollback_swap(&swaps[i]);
     for(int i=0;i<5;i++)cleanup_swap(&swaps[i]);
-    int rollback_boot=bootstrap_daemon();refresh_app();
-    int rollback_health=rollback_boot&&old_version[0]&&wait_version(old_version);
+    int rollback_boot=bootstrap_daemon();
+    int rollback_app=rollback_boot&&refresh_app()&&wait_app_registered();
+    int rollback_health=rollback_app&&old_version[0]&&wait_version(old_version);
     remove_tree(work);
-    if(rollback_health){rt_update_mark(request_id,"rolled_back",target_version,"previous daemon restored","new daemon failed health check");return 12;}
-    rt_update_mark(request_id,"rollback_failed",target_version,NULL,"new daemon failed and previous daemon health could not be restored");return 13;
+    if(rollback_health){rt_update_mark(request_id,"rolled_back",target_version,"previous daemon and foreground app restored",transition_error);return 12;}
+    char rollback_error[768]={0};
+    snprintf(rollback_error,sizeof(rollback_error),"%s; rollback bootstrap=%s appRegistration=%s previousVersion=%s rollbackHealth=%s",
+        transition_error,
+        rollback_boot?"ok":"failed",
+        rollback_app?"ok":"failed",
+        old_version[0]?old_version:"unavailable",
+        rollback_health?"ok":"failed");
+    rt_update_mark(request_id,"rollback_failed",target_version,NULL,rollback_error);return 13;
 }
 
 int main(int argc, char **argv) {

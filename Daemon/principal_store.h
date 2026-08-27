@@ -31,6 +31,7 @@ int rt_principal_authenticate(
     char *kind_out,
     size_t kind_cap
 );
+int rt_principal_active_kind(const char *principal_id, char *kind_out, size_t kind_cap);
 
 int rt_principal_grant(
     const char *principal_id,

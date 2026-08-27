@@ -39,8 +39,13 @@ int main(void) {
     assert(!strcmp(busy.result,"busy"));
 
     char request[128]={0};
+    assert(rt_update_peek_pending(request,sizeof(request)));
+    assert(!strcmp(request,"update-request-1"));
+    memset(request,0,sizeof(request));
     assert(rt_update_claim_pending(request,sizeof(request)));
     assert(!strcmp(request,"update-request-1"));
+    char none[128]={0};
+    assert(!rt_update_peek_pending(none,sizeof(none)));
     RTUpdateInfo info;
     assert(rt_update_get(request,&info));
     assert(!strcmp(info.state,"launching"));

@@ -142,6 +142,15 @@ launchctl bootout "$LAUNCH_DOMAIN/com.arthur.roottools.updater" >/dev/null 2>&1 
 launchctl bootstrap "$LAUNCH_DOMAIN" "$PLIST"
 launchctl bootstrap "$LAUNCH_DOMAIN" "$UPDATER_PLIST"
 /var/jb/usr/bin/uicache -p "$APP"
+REGISTERED=0
+for attempt in 1 2 3 4 5; do
+    if /var/jb/usr/bin/uicache -i com.arthur.roottools.ios >/dev/null 2>&1; then REGISTERED=1; break; fi
+    sleep 1
+done
+if [ "$REGISTERED" -ne 1 ]; then
+    echo "RootTools: foreground App registration verification failed" >&2
+    exit 1
+fi
 exit 0
 """
 
@@ -188,8 +197,8 @@ def main() -> int:
     parser.add_argument("--updater", type=Path, default=DEFAULT_UPDATER)
     parser.add_argument("--plist", type=Path, default=DEFAULT_PLIST)
     parser.add_argument("--updater-plist", type=Path, default=DEFAULT_UPDATER_PLIST)
-    parser.add_argument("--version", default="0.21.0-1")
-    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.21.0-1_iphoneos-arm64.deb")
+    parser.add_argument("--version", default="0.22.0-3")
+    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.22.0-3_iphoneos-arm64.deb")
     args = parser.parse_args()
     build_package(args.app, args.daemon, args.updater, args.plist, args.updater_plist, args.output, args.version)
     print(args.output)

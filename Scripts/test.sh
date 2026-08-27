@@ -37,6 +37,10 @@ clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   -framework CoreFoundation -o build/tests/remote_worker_controller_test
 build/tests/remote_worker_controller_test
 clang -std=c11 -Wall -Wextra -Werror -I Daemon \
+  Tests/remote_access_controller_test.c Daemon/remote_access_controller.c Daemon/principal_store.c \
+  -lsqlite3 -framework CoreFoundation -o build/tests/remote_access_controller_test
+build/tests/remote_access_controller_test
+clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   Tests/principal_store_test.c Daemon/principal_store.c \
   -lsqlite3 -framework CoreFoundation -o build/tests/principal_store_test
 build/tests/principal_store_test
@@ -61,7 +65,7 @@ sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     Daemon/roottools_updater.c > build/tests/roottools_updater_mac.c
 clang -std=c11 -Wall -Wextra -Werror -I Daemon \
-  build/tests/roottools_execd_mac.c Daemon/control_plane.c Daemon/provider_registry.c Daemon/package_controller.c Daemon/update_controller.c Daemon/runtime_observer.c Daemon/remote_worker_controller.c Daemon/principal_store.c \
+  build/tests/roottools_execd_mac.c Daemon/control_plane.c Daemon/provider_registry.c Daemon/package_controller.c Daemon/update_controller.c Daemon/runtime_observer.c Daemon/remote_worker_controller.c Daemon/remote_access_controller.c Daemon/principal_store.c \
   -lsqlite3 -lz -framework CoreFoundation -o build/tests/roottools-execd-mac
 python3 Tests/http_contract_test.py \
   --daemon build/tests/roottools-execd-mac \

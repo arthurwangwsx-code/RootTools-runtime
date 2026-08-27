@@ -22,6 +22,8 @@ int main(void) {
     assert(!strcmp(rt_provider_for_capability("device.performance.observe"), "ios.darwin"));
     assert(!strcmp(rt_provider_for_capability("device.remote-worker.observe"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.remote-worker.configure"), "roottools.execd"));
+    assert(!strcmp(rt_provider_for_capability("device.remote-access.observe"), "roottools.execd"));
+    assert(!strcmp(rt_provider_for_capability("device.remote-access.configure"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.task.submit-app-launch"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.task.cancel"), "roottools.execd"));
     assert(!strcmp(rt_provider_for_capability("device.ui.observe"), "ui.zxtouch"));

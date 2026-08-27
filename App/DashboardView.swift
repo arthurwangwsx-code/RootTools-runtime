@@ -197,6 +197,8 @@ struct DeviceHubView: View {
                     HubSection(title: "Interaction", subtitle: "Observe and control the visible device UI through typed tasks") {
                         NavigationLink(value: ToolKind.uiAutomation) { HubRow(tool: .uiAutomation) }
                         Divider().padding(.leading, 54)
+                        NavigationLink(value: ToolKind.remoteAccess) { HubRow(tool: .remoteAccess) }
+                        Divider().padding(.leading, 54)
                         NavigationLink(value: ToolKind.remoteWorker) { HubRow(tool: .remoteWorker) }
                     }
 
@@ -538,6 +540,8 @@ private struct RootToolDestination: View {
             TrustedAgentsView()
         } else if tool == .uiAutomation {
             UIAutomationView()
+        } else if tool == .remoteAccess {
+            RemoteAccessView()
         } else if tool == .remoteWorker {
             RemoteWorkerView()
         } else {

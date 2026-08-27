@@ -34,12 +34,13 @@
 #include "package_controller.h"
 #include "principal_store.h"
 #include "provider_registry.h"
+#include "remote_access_controller.h"
 #include "remote_worker_controller.h"
 #include "runtime_observer.h"
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.21.0"
+#define VERSION "0.22.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -70,6 +71,18 @@ static int listen_port(void) {
     if(!override||!override[0]) return PORT;
     char *end=NULL; long value=strtol(override,&end,10);
     return end&&*end==0&&value>1024&&value<=65535?(int)value:PORT;
+}
+
+static int create_ipv4_listener(const char *address, int port) {
+    if(!address||!address[0]||port<1||port>65535)return -1;
+    int s=socket(AF_INET,SOCK_STREAM,0);if(s<0)return -1;
+    fcntl(s,F_SETFD,FD_CLOEXEC);
+    int one=1;setsockopt(s,SOL_SOCKET,SO_REUSEADDR,&one,sizeof(one));
+    struct sockaddr_in addr={0};addr.sin_family=AF_INET;addr.sin_port=htons((uint16_t)port);
+    if(inet_pton(AF_INET,address,&addr.sin_addr)!=1||bind(s,(struct sockaddr*)&addr,sizeof(addr))!=0||listen(s,16)!=0){
+        close(s);return -1;
+    }
+    return s;
 }
 
 static const char *audit_path(void) {
@@ -1885,6 +1898,13 @@ static void send_remote_worker(int fd) {
     free(response);
 }
 
+static void send_remote_access(int fd) {
+    char *response=rt_remote_access_json();
+    if(!response){send_error(fd,503,"remote access state unavailable");return;}
+    send_response(fd,200,"application/json",response);
+    free(response);
+}
+
 static void send_runtime_catalog(int fd) {
     int dopamine=0; char *process_snapshot=processes_text(&dopamine); free(process_snapshot);
     int rootless=access("/var/jb",F_OK)==0;
@@ -2815,6 +2835,42 @@ static void execute_remote_worker_configure(const char *body, RTActionExecution 
         execution->ok?(after.config.enabled?"remote worker policy is active":"remote worker policy is disabled"):"configuration read-back mismatch");
 }
 
+static void execute_remote_access_configure(const char *body, RTActionExecution *execution) {
+    int enabled=0;
+    if(!json_get_bool(body,"enabled",&enabled)){
+        snprintf(execution->target,sizeof(execution->target),"remote-access");
+        snprintf(execution->message,sizeof(execution->message),"enabled is required");
+        return;
+    }
+    char principal_id[128]={0};
+    long duration_minutes=60;
+    if(enabled){
+        if(!json_get_string(body,"principalId",principal_id,sizeof(principal_id))||
+           !json_get_int(body,"durationMinutes",&duration_minutes)){
+            snprintf(execution->target,sizeof(execution->target),"remote-access");
+            snprintf(execution->message,sizeof(execution->message),"principalId and durationMinutes are required when enabling remote access");
+            return;
+        }
+    }
+    snprintf(execution->target,sizeof(execution->target),enabled?"principal=%s duration=%ldm":"disabled",principal_id,duration_minutes);
+    execution->executed=1;
+    char error[256]={0};
+    int configured=rt_remote_access_configure(enabled,principal_id,(int)duration_minutes,error,sizeof(error));
+    RTRemoteAccessState after={0};
+    int observed=rt_remote_access_snapshot(&after);
+    execution->post_checked=1;
+    execution->post_passed=configured&&observed&&after.enabled==(enabled?1:0)&&
+        (!enabled||(!strcmp(after.principal_id,principal_id)&&after.transport_available));
+    execution->ok=execution->post_passed;
+    snprintf(execution->result,sizeof(execution->result),execution->ok?(enabled?"enabled":"disabled"):"failed");
+    snprintf(execution->message,sizeof(execution->message),"%s",execution->ok?
+        (enabled?"Bounded Tailscale remote session enabled":"Remote session disabled"):
+        (error[0]?error:"Remote session configuration failed"));
+    snprintf(execution->post_detail,sizeof(execution->post_detail),execution->ok?
+        (enabled?"Tailscale transport available and Host principal pinned":"remote listener will be closed"):
+        "remote session state verification failed");
+}
+
 static int ui_text_valid(const char *text) {
     size_t length=text?strlen(text):0;
     if(!length||length>1024)return 0;
@@ -3033,24 +3089,25 @@ static void automation_tick(void) {
     task_update(task_id,"failed",NULL,"unsupported task kind",1);
 }
 
-static pid_t self_update_child=0;
-
 static void self_update_tick(void) {
-    if(self_update_child>0){
-        int status=0;pid_t reaped=waitpid(self_update_child,&status,WNOHANG);
-        if(reaped==0)return;
-        self_update_child=0;
-    }
     char request_id[128]={0};
-    if(!rt_update_claim_pending(request_id,sizeof(request_id)))return;
+    if(!rt_update_peek_pending(request_id,sizeof(request_id)))return;
     char updater[1024]={0};
     if(!rt_provider_resolve_executable("roottools.updater",updater,sizeof(updater))){
         rt_update_mark(request_id,"failed",NULL,NULL,"independent updater executable unavailable");return;
     }
-    char *argv[]={(char*)"roottools-updater",(char*)"--request",request_id,NULL};
-    pid_t pid=0;int rc=posix_spawn(&pid,updater,NULL,NULL,argv,environ);
-    if(rc!=0){rt_update_mark(request_id,"failed",NULL,NULL,"independent updater could not be spawned");return;}
-    self_update_child=pid;
+    (void)updater;
+    const char *launchctl=access("/bin/launchctl",X_OK)==0?"/bin/launchctl":"/usr/bin/launchctl";
+    const char *domain=access("/var/jb",F_OK)==0?"user/foreground":"system";
+    char service[192]={0};
+    snprintf(service,sizeof(service),"%s/com.arthur.roottools.updater",domain);
+    char *argv[]={(char*)"launchctl",(char*)"kickstart",(char*)"-k",service,NULL};
+    int rc=fixed_spawn_wait(launchctl,argv,NULL,0);
+    if(rc!=0){
+        char detail[256]={0};
+        snprintf(detail,sizeof(detail),"independent updater launchd kickstart failed rc=%d",rc);
+        rt_update_mark(request_id,"failed",NULL,NULL,detail);
+    }
 }
 
 static void route_capability(
@@ -3138,6 +3195,7 @@ static void route_capability(
     else if(legacy_action&&!strcmp(legacy_action,"principal.ungrant")) execute_principal_ungrant(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"policy.set-mode")) execute_policy_set_mode(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"remote-worker.configure")) execute_remote_worker_configure(body,&execution);
+    else if(legacy_action&&!strcmp(legacy_action,"remote-access.configure")) execute_remote_access_configure(body,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.queue-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"task.submit-app-launch")) execute_queue_app_launch(body,context.request_id,context.caller,&execution);
     else if(legacy_action&&!strcmp(legacy_action,"automation.cancel")) execute_automation_cancel(body,context.caller,trusted_confirmation_source,&execution);
@@ -3191,11 +3249,17 @@ static void handle_capability_set(int fd, const char *body, RTAuthRole role) {
     send_capability_catalog(fd);
 }
 
-static void handle(int fd) {
+static void handle(int fd, int remote_ingress) {
     char *req=calloc(1,MAX_REQUEST); if(!req)return; ssize_t n=read_request(fd,req,MAX_REQUEST); if(n<=0){free(req);return;} if(n==-2){send_error(fd,400,"request body too large");free(req);return;}
     char caller[192]={0};
     RTAuthRole auth_role=request_auth_role(req,caller,sizeof(caller));
     if (auth_role==RT_AUTH_NONE) { send_response(fd, 401, "application/json", "{\"error\":\"unauthorized\"}"); free(req); return; }
+    if(remote_ingress){
+        const char *prefix="principal:";
+        if(auth_role!=RT_AUTH_AGENT||strncmp(caller,prefix,strlen(prefix))||!rt_remote_access_allows_principal(caller+strlen(prefix))){
+            send_response(fd,403,"application/json","{\"error\":\"remote_session_principal_required\"}");free(req);return;
+        }
+    }
     int trusted_confirmation_source=auth_role==RT_AUTH_ADMIN;
     char method[16]={0}, path[256]={0}; sscanf(req, "%15s %255s", method, path); const char *body=request_body(req);
 
@@ -3222,6 +3286,7 @@ static void handle(int fd) {
     }
     if (!strcmp(method,"GET") && !strcmp(path, "/v1/performance")) { if(authorize_read_capability(fd,"device.performance.observe",caller)) send_performance(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/remote-worker")) { if(authorize_read_capability(fd,"device.remote-worker.observe",caller)) send_remote_worker(fd); }
+    else if (!strcmp(method,"GET") && !strcmp(path, "/v1/remote-access")) { if(authorize_read_capability(fd,"device.remote-access.observe",caller)) send_remote_access(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime")) { if(authorize_read_capability(fd,"device.runtime.observe",caller)) send_text_payload(fd, runtime_text()); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/catalog")) { if(authorize_read_capability(fd,"device.runtime.adapters",caller)) send_runtime_catalog(fd); }
     else if (!strcmp(method,"GET") && !strcmp(path, "/v1/runtime/frida")) { if(authorize_read_capability(fd,"device.runtime.frida.observe",caller)) send_frida_status(fd); }
@@ -3284,21 +3349,44 @@ int main(void) {
     automation_recover_incomplete_jobs();
     task_recover_incomplete();
     rt_remote_worker_init();
-    int s = socket(AF_INET, SOCK_STREAM, 0); if (s < 0) return 2;
-    fcntl(s,F_SETFD,FD_CLOEXEC);
-    int one=1; setsockopt(s, SOL_SOCKET, SO_REUSEADDR, &one, sizeof(one));
-    struct sockaddr_in addr={0}; addr.sin_family=AF_INET; addr.sin_port=htons(listen_port()); addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
-    if (bind(s, (struct sockaddr*)&addr, sizeof(addr)) != 0) return 3;
-    if (listen(s, 16) != 0) return 4;
+    rt_remote_access_init();
+    int s=create_ipv4_listener("127.0.0.1",listen_port());if(s<0)return 2;
+    int remote_listener=-1,remote_port=0;
+    char remote_address[64]={0};
     while (daemon_running) {
-        fd_set rfds; FD_ZERO(&rfds); FD_SET(s,&rfds); struct timeval tv={.tv_sec=1,.tv_usec=0};
-        int ready=select(s+1,&rfds,NULL,NULL,&tv);
-        if(ready>0&&FD_ISSET(s,&rfds)){int c=accept(s,NULL,NULL);if(c>=0){handle(c);close(c);}}
+        rt_remote_access_tick();
+        RTRemoteAccessState remote_state={0};
+        (void)rt_remote_access_snapshot(&remote_state);
+        int should_listen=remote_state.enabled&&remote_state.transport_available&&remote_state.bind_address[0];
+        int listener_matches=remote_listener>=0&&remote_port==remote_state.port&&!strcmp(remote_address,remote_state.bind_address);
+        if(!should_listen&&remote_listener>=0){
+            close(remote_listener);remote_listener=-1;remote_port=0;remote_address[0]=0;
+            rt_remote_access_set_listener_status(0,remote_state.enabled?"Tailscale transport unavailable":NULL);
+        } else if(should_listen&&!listener_matches){
+            if(remote_listener>=0)close(remote_listener);
+            errno=0;
+            remote_listener=create_ipv4_listener(remote_state.bind_address,remote_state.port);
+            remote_port=remote_state.port;snprintf(remote_address,sizeof(remote_address),"%s",remote_state.bind_address);
+            if(remote_listener>=0)rt_remote_access_set_listener_status(1,NULL);
+            else {
+                char detail[192]={0};snprintf(detail,sizeof(detail),"could not bind %s:%d: %s",remote_state.bind_address,remote_state.port,strerror(errno));
+                rt_remote_access_set_listener_status(0,detail);
+            }
+        }
+
+        fd_set rfds;FD_ZERO(&rfds);FD_SET(s,&rfds);int max_fd=s;
+        if(remote_listener>=0){FD_SET(remote_listener,&rfds);if(remote_listener>max_fd)max_fd=remote_listener;}
+        struct timeval tv={.tv_sec=1,.tv_usec=0};
+        int ready=select(max_fd+1,&rfds,NULL,NULL,&tv);
+        if(ready>0&&FD_ISSET(s,&rfds)){int c=accept(s,NULL,NULL);if(c>=0){handle(c,0);close(c);}}
+        if(ready>0&&remote_listener>=0&&FD_ISSET(remote_listener,&rfds)){int c=accept(remote_listener,NULL,NULL);if(c>=0){handle(c,1);close(c);}}
         rt_remote_worker_tick();
         automation_tick();
         self_update_tick();
     }
     close(s);
+    if(remote_listener>=0)close(remote_listener);
+    rt_remote_access_set_listener_status(0,NULL);
     rt_remote_worker_shutdown();
     return 0;
 }

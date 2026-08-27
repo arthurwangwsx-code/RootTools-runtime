@@ -107,6 +107,7 @@ DAEMON_SOURCES=(
   Daemon/update_controller.c
   Daemon/runtime_observer.c
   Daemon/remote_worker_controller.c
+  Daemon/remote_access_controller.c
   Daemon/principal_store.c
 )
 DAEMON_OBJECTS=()

@@ -26,6 +26,7 @@ typedef struct {
 } RTUpdateInfo;
 
 int rt_update_schedule(const char *request_id, const char *package_id, RTUpdateOperation *operation);
+int rt_update_peek_pending(char *request_id, size_t cap);
 int rt_update_claim_pending(char *request_id, size_t cap);
 int rt_update_get(const char *request_id, RTUpdateInfo *info);
 int rt_update_mark(const char *request_id, const char *state, const char *target_version,

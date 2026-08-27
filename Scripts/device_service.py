@@ -27,6 +27,7 @@ from usbmux_proxy import discover_udid, port_forward
 
 
 DEVICE_PORT = int(os.environ.get("ROOTTOOLS_DEVICE_PORT", "45821"))
+REMOTE_ACCESS_PORT = int(os.environ.get("ROOTTOOLS_REMOTE_ACCESS_PORT", "45822"))
 ROOT = Path(__file__).resolve().parent.parent
 DEFAULT_AGENT_TOKEN = ROOT / ".roottools-agent-token"
 DEFAULT_ADMIN_TOKEN = ROOT / ".roottools-token"
@@ -78,8 +79,8 @@ def device_proxy(udid: str | None):
 
 
 class DeviceServiceClient:
-    def __init__(self, port: int, token: str, caller: str):
-        self.base_url = f"http://127.0.0.1:{port}"
+    def __init__(self, port: int, token: str, caller: str, host: str = "127.0.0.1"):
+        self.base_url = f"http://{host}:{port}"
         self.token = token
         self.caller = caller
 
@@ -116,6 +117,9 @@ class DeviceServiceClient:
 
     def remote_worker(self) -> dict:
         return self.request("GET", "/v1/remote-worker")
+
+    def remote_access(self) -> dict:
+        return self.request("GET", "/v1/remote-access")
 
     def hello(self) -> dict:
         return self.request("GET", "/v1/hello")
@@ -301,6 +305,24 @@ class DeviceServiceClient:
             confirmed=confirmed,
         )
 
+    def configure_remote_access(
+        self,
+        *,
+        enabled: bool,
+        principal_id: str,
+        duration_minutes: int,
+        confirmed: bool,
+    ) -> dict:
+        return self.action(
+            "device.remote-access.configure",
+            {
+                "enabled": enabled,
+                "principalId": principal_id,
+                "durationMinutes": duration_minutes,
+            },
+            confirmed=confirmed,
+        )
+
     def grant_all_principal(self, principal_id: str, confirmed: bool) -> dict:
         catalog = self.capabilities().get("capabilities", [])
         grantable = [item["id"] for item in catalog if item.get("risk") in {"R0", "R1"} and item.get("hardEnabled", item.get("enabled", False))]
@@ -435,6 +457,8 @@ def parameters_json(value: str) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Typed RootTools Device Service client")
     parser.add_argument("--udid", default=os.environ.get("ROOTTOOLS_UDID"), help="USB iPhone UDID; omit for local daemon")
+    parser.add_argument("--host", default=os.environ.get("ROOTTOOLS_REMOTE_HOST"), help="Direct private-overlay host, e.g. the phone's Tailscale IPv4; bypasses USB")
+    parser.add_argument("--port", type=int, default=None, help="Direct private-overlay port; defaults to 45822 when --host is used")
     parser.add_argument("--token-file", type=Path, default=DEFAULT_AGENT_TOKEN)
     parser.add_argument("--caller", default="host-cli")
     parser.add_argument("--request-id", help="Stable idempotency key for retrying one action byte-for-byte")
@@ -457,6 +481,14 @@ def build_parser() -> argparse.ArgumentParser:
     remote_worker_set.add_argument("--thermal-resume-c", type=float, default=37.0)
     remote_worker_set.add_argument("--charge-control", action="store_true", help="Enable reversible PredictiveChargingInhibit guard")
     remote_worker_set.add_argument("--confirm", action="store_true", required=True)
+    sub.add_parser("remote-access", help="Read bounded private remote-session state")
+    remote_access_set = sub.add_parser("remote-access-set", help="R2 owner action: start or stop a bounded Tailscale remote session")
+    remote_access_mode = remote_access_set.add_mutually_exclusive_group(required=True)
+    remote_access_mode.add_argument("--enable", action="store_true")
+    remote_access_mode.add_argument("--disable", action="store_true")
+    remote_access_set.add_argument("--principal-id", default="", help="Active Host Principal pinned to the session")
+    remote_access_set.add_argument("--duration-minutes", type=int, default=60)
+    remote_access_set.add_argument("--confirm", action="store_true", required=True)
     sub.add_parser("capabilities")
     sub.add_parser("providers")
     sub.add_parser("policy")
@@ -615,6 +647,17 @@ def execute(client: DeviceServiceClient, args: argparse.Namespace) -> dict:
             charge_control_enabled=args.charge_control,
             confirmed=args.confirm,
         )
+    if args.command == "remote-access":
+        return client.remote_access()
+    if args.command == "remote-access-set":
+        if args.enable and not args.principal_id:
+            raise DeviceServiceError("--principal-id is required when enabling remote access")
+        return client.configure_remote_access(
+            enabled=args.enable and not args.disable,
+            principal_id=args.principal_id if args.enable else "",
+            duration_minutes=args.duration_minutes if args.enable else 0,
+            confirmed=args.confirm,
+        )
     if args.command == "capabilities":
         return client.capabilities()
     if args.command == "providers":
@@ -761,14 +804,22 @@ def main() -> int:
     args = parser.parse_args()
     try:
         token = load_token(args.token_file)
-        target_udid = args.udid
-        if not target_udid:
-            try:
-                target_udid = discover_udid()
-            except Exception:
-                target_udid = None
-        with device_proxy(target_udid) as port:
-            result = execute(DeviceServiceClient(port, token, args.caller), args)
+        if args.host:
+            if args.udid:
+                raise DeviceServiceError("--host and --udid are mutually exclusive")
+            direct_port = args.port or REMOTE_ACCESS_PORT
+            if direct_port < 1 or direct_port > 65535:
+                raise DeviceServiceError("--port must be between 1 and 65535")
+            result = execute(DeviceServiceClient(direct_port, token, args.caller, host=args.host), args)
+        else:
+            target_udid = args.udid
+            if not target_udid:
+                try:
+                    target_udid = discover_udid()
+                except Exception:
+                    target_udid = None
+            with device_proxy(target_udid) as port:
+                result = execute(DeviceServiceClient(port, token, args.caller), args)
         if args.command in {"agent-rotate", "principal-create"} and getattr(args, "save_to", None) and result.get("ok") and result.get("output"):
             args.save_to.parent.mkdir(parents=True, exist_ok=True)
             args.save_to.write_text(result["output"] + "\n")

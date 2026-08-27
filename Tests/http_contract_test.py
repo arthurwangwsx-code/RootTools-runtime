@@ -29,14 +29,22 @@ def free_port() -> int:
         return int(sock.getsockname()[1])
 
 
-def request(port: int, token: str | None, method: str, path: str, body: dict | None = None) -> tuple[int, dict]:
+def request(
+    port: int,
+    token: str | None,
+    method: str,
+    path: str,
+    body: dict | None = None,
+    *,
+    host: str = "127.0.0.1",
+) -> tuple[int, dict]:
     data = None if body is None else json.dumps(body, separators=(",", ":")).encode()
     headers: dict[str, str] = {}
     if token is not None:
         headers["X-RootTools-Token"] = token
     if data is not None:
         headers["Content-Type"] = "application/json"
-    req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method, data=data, headers=headers)
+    req = urllib.request.Request(f"http://{host}:{port}{path}", method=method, data=data, headers=headers)
     try:
         with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
             return response.status, json.loads(response.read())
@@ -110,6 +118,8 @@ def main() -> int:
         update_db = temp_path / "self-update.sqlite3"
         principal_db = temp_path / "principals.sqlite3"
         remote_worker_state = temp_path / "remote-worker.conf"
+        remote_access_state = temp_path / "remote-access.conf"
+        remote_access_port = free_port()
         system_apps_root = temp_path / "system-apps"
         jailbreak_apps_root = temp_path / "jailbreak-apps"
         user_apps_root = temp_path / "user-apps"
@@ -171,6 +181,9 @@ def main() -> int:
             "ROOTTOOLS_UPDATE_DB": str(update_db),
             "ROOTTOOLS_PRINCIPAL_DB": str(principal_db),
             "ROOTTOOLS_REMOTE_WORKER_STATE_PATH": str(remote_worker_state),
+            "ROOTTOOLS_REMOTE_ACCESS_STATE_PATH": str(remote_access_state),
+            "ROOTTOOLS_TEST_TAILNET_IPV4": "127.0.0.1",
+            "ROOTTOOLS_REMOTE_ACCESS_PORT": str(remote_access_port),
             "ROOTTOOLS_SYSTEM_APPS_ROOT": str(system_apps_root),
             "ROOTTOOLS_JAILBREAK_APPS_ROOT": str(jailbreak_apps_root),
             "ROOTTOOLS_USER_APPS_ROOT": str(user_apps_root),
@@ -470,6 +483,53 @@ def main() -> int:
             assert status == 200
             assert principal_status["daemonVersion"]
 
+            status, remote_access = request(port, args.admin_token, "GET", "/v1/remote-access")
+            assert status == 200
+            assert remote_access["enabled"] is False
+            assert remote_access["transport"]["available"] is True
+            assert remote_access["policy"]["publicInternetListener"] is False
+            assert remote_access["policy"]["ownerTokenAcceptedRemotely"] is False
+            assert remote_access["policy"]["legacyAgentTokenAcceptedRemotely"] is False
+
+            remote_agent_attempt = action(
+                port,
+                args.agent_token,
+                "device.remote-access.configure",
+                confirmed=True,
+                parameters={"enabled": True, "principalId": "host:test-mac", "durationMinutes": 30},
+            )
+            assert remote_agent_attempt["result"] == "confirmation_required"
+
+            remote_owner_start = action(
+                port,
+                args.admin_token,
+                "device.remote-access.configure",
+                confirmed=True,
+                parameters={"enabled": True, "principalId": "host:test-mac", "durationMinutes": 30},
+            )
+            assert remote_owner_start["ok"] is True
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                status, remote_access = request(port, args.admin_token, "GET", "/v1/remote-access")
+                assert status == 200
+                if remote_access["transport"]["listenerActive"]:
+                    break
+                time.sleep(0.1)
+            assert remote_access["enabled"] is True
+            assert remote_access["principalId"] == "host:test-mac"
+            assert remote_access["transport"]["listenerActive"] is True
+            assert remote_access["transport"]["port"] == remote_access_port
+
+            status, remote_owner_denied = request(remote_access_port, args.admin_token, "GET", "/v1/hello")
+            assert status == 403
+            assert remote_owner_denied["error"] == "remote_session_principal_required"
+            status, remote_legacy_denied = request(remote_access_port, args.agent_token, "GET", "/v1/hello")
+            assert status == 403
+            assert remote_legacy_denied["error"] == "remote_session_principal_required"
+            status, remote_principal_status = request(remote_access_port, principal_token, "GET", "/v1/status")
+            assert status == 200
+            assert remote_principal_status["daemonVersion"]
+
             principal_write = action(
                 port,
                 principal_token,
@@ -508,6 +568,14 @@ def main() -> int:
             assert owner_revoke["ok"] is True
             status, _ = request(port, principal_token, "GET", "/v1/hello")
             assert status == 401
+            deadline = time.time() + 5
+            while time.time() < deadline:
+                status, remote_access = request(port, args.admin_token, "GET", "/v1/remote-access")
+                assert status == 200
+                if not remote_access["enabled"]:
+                    break
+                time.sleep(0.1)
+            assert remote_access["enabled"] is False
 
             status, catalog = request(port, args.agent_token, "GET", "/v1/capabilities/catalog")
             assert status == 200

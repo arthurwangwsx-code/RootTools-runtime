@@ -127,6 +127,16 @@ private struct RemoteWorkerConfigureBody: Codable {
     var confirmed: Bool
 }
 
+private struct RemoteAccessConfigureBody: Codable {
+    var capabilityId: String
+    var enabled: Bool
+    var principalId: String
+    var durationMinutes: Int
+    var requestId: String
+    var caller: String
+    var confirmed: Bool
+}
+
 private struct PrincipalGrantBody: Codable {
     var capabilityId: String
     var principalId: String
@@ -249,6 +259,27 @@ final class DaemonClient {
     func remoteWorkerState() async throws -> RemoteWorkerState {
         let data = try await request(path: "/v1/remote-worker")
         return try decoder.decode(RemoteWorkerState.self, from: data)
+    }
+
+    func remoteAccessState() async throws -> RemoteAccessState {
+        let data = try await request(path: "/v1/remote-access")
+        return try decoder.decode(RemoteAccessState.self, from: data)
+    }
+
+    func configureRemoteAccess(enabled: Bool, principalID: String, durationMinutes: Int) async throws -> ActionReceipt {
+        try await post(
+            path: "/v1/commands/submit",
+            body: RemoteAccessConfigureBody(
+                capabilityId: "device.remote-access.configure",
+                enabled: enabled,
+                principalId: principalID,
+                durationMinutes: durationMinutes,
+                requestId: UUID().uuidString,
+                caller: caller,
+                confirmed: true
+            ),
+            response: ActionReceipt.self
+        )
     }
 
     func configureRemoteWorker(
