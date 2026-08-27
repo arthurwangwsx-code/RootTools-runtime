@@ -1,0 +1,17 @@
+name: RootTools Validation
+
+on:
+  pull_request:
+  push:
+    branches:
+      - main
+
+jobs:
+  tests:
+    runs-on: macos-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Run contract suite
+        run: bash Scripts/test.sh
