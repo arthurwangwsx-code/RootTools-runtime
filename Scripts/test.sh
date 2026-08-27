@@ -78,6 +78,7 @@ python3 -m py_compile \
   Scripts/device_doctor.py \
   Scripts/root_exec.py \
   Scripts/verify-device.py \
+  Scripts/migrate-v09-updater-path.py \
   Scripts/package-rootless-deb.py
 bash -n Scripts/build.sh Scripts/install-jailbreak.sh
 

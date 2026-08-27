@@ -19,6 +19,10 @@ import uuid
 import zipfile
 
 
+HTTP_TIMEOUT_SECONDS = 8
+READY_TIMEOUT_SECONDS = 12
+
+
 def free_port() -> int:
     with socket.socket(socket.AF_INET, socket.SOCK_STREAM) as sock:
         sock.bind(("127.0.0.1", 0))
@@ -34,7 +38,7 @@ def request(port: int, token: str | None, method: str, path: str, body: dict | N
         headers["Content-Type"] = "application/json"
     req = urllib.request.Request(f"http://127.0.0.1:{port}{path}", method=method, data=data, headers=headers)
     try:
-        with urllib.request.urlopen(req, timeout=2) as response:
+        with urllib.request.urlopen(req, timeout=HTTP_TIMEOUT_SECONDS) as response:
             return response.status, json.loads(response.read())
     except urllib.error.HTTPError as error:
         return error.code, json.loads(error.read())
@@ -71,7 +75,7 @@ def action(
 
 
 def wait_ready(port: int, token: str) -> None:
-    deadline = time.time() + 3
+    deadline = time.time() + READY_TIMEOUT_SECONDS
     while time.time() < deadline:
         try:
             status, _ = request(port, token, "GET", "/v1/status")
@@ -854,13 +858,18 @@ def main() -> int:
             )
             assert ui_tap["ok"] and ui_type["ok"] and ui_swipe["ok"]
             ui_task_ids = {ui_tap["output"], ui_type["output"], ui_swipe["output"]}
-            time.sleep(1.1)
-            status, task_catalog = request(port, args.agent_token, "GET", "/v1/tasks/catalog")
-            assert status == 200
-            ui_rows = {item["taskId"]: item for item in task_catalog["tasks"] if item["taskId"] in ui_task_ids}
+            deadline = time.time() + 30
+            ui_rows = {}
+            while time.time() < deadline:
+                status, task_catalog = request(port, args.agent_token, "GET", "/v1/tasks/catalog")
+                assert status == 200
+                ui_rows = {item["taskId"]: item for item in task_catalog["tasks"] if item["taskId"] in ui_task_ids}
+                if set(ui_rows) == ui_task_ids and all(item["state"] == "waiting_for_unlock" for item in ui_rows.values()):
+                    break
+                time.sleep(0.1)
             assert set(ui_rows) == ui_task_ids
             assert {item["kind"] for item in ui_rows.values()} == {"ui.tap", "ui.type", "ui.swipe"}
-            assert all(item["state"] == "waiting_for_unlock" for item in ui_rows.values())
+            assert all(item["state"] == "waiting_for_unlock" for item in ui_rows.values()), ui_rows
             assert all(item["requiresUI"] is True for item in ui_rows.values())
 
             for ui_task_id in ui_task_ids:

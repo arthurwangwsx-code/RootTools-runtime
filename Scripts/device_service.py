@@ -33,7 +33,9 @@ DEFAULT_ADMIN_TOKEN = ROOT / ".roottools-token"
 
 
 class DeviceServiceError(RuntimeError):
-    pass
+    def __init__(self, message: str, *, status_code: int | None = None):
+        super().__init__(message)
+        self.status_code = status_code
 
 
 def free_local_port() -> int:
@@ -97,7 +99,7 @@ class DeviceServiceClient:
                 payload = response.read()
         except urllib.error.HTTPError as error:
             payload = error.read().decode(errors="replace")
-            raise DeviceServiceError(f"HTTP {error.code}: {payload}") from error
+            raise DeviceServiceError(f"HTTP {error.code}: {payload}", status_code=error.code) from error
         except (urllib.error.URLError, ConnectionError, TimeoutError, OSError) as error:
             raise DeviceServiceError(f"Device Service unavailable: {error}") from error
 
@@ -224,12 +226,22 @@ class DeviceServiceClient:
         }
         if expected_revision is not None:
             body["expectedRevision"] = expected_revision
-        return self.request(
-            "POST",
-            "/v1/commands/submit",
-            body,
-            timeout=timeout,
-        )
+        try:
+            return self.request(
+                "POST",
+                "/v1/commands/submit",
+                body,
+                timeout=timeout,
+            )
+        except DeviceServiceError as error:
+            # v0.9 is the last physical bootstrap daemon and predates the
+            # canonical Command Gateway path. Keep the exact same typed body
+            # and idempotency key, but fall back only when that endpoint is
+            # genuinely absent. Any policy/auth/execution error is returned
+            # directly and is never hidden by compatibility behavior.
+            if error.status_code != 404:
+                raise
+            return self.request("POST", "/v1/action", body, timeout=timeout)
 
     def create_principal(self, principal_id: str, kind: str, display_name: str, confirmed: bool) -> dict:
         return self.action(

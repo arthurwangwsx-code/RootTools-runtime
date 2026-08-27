@@ -55,6 +55,8 @@ The `v0.19.0` line adds Remote Worker Mode for long-running device automation. T
 
 The `v0.20.0` line turns the declared RootTools filesystem scopes into a product-level Files Manager. Nested paths are resolved relative to fixed `mobile`/`bootstrap` roots with per-segment validation and `openat`/`O_NOFOLLOW` traversal. The app can browse directories, inspect file metadata, create bounded text files and read/edit bounded UTF-8-oriented text content without exposing an arbitrary root path or following symlinks.
 
+The `v0.21.0` line closes the one-time physical v0.9 bootstrap gap on Dopamine. Host migration tooling verifies the staged RootTools DEB by SHA-256, preserves the typed Owner R2 self-update request, installs only the verified candidate updater needed to cross the old PATH/domain boundary, and retains the normal fixed allowlist, daemon health check and rollback protocol. Rootless launchd operations now target the foreground-user domain. The reference iOS 16 device successfully reached a healthy UID 0 v0.21 daemon.
+
 Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
 
 ## Build and install

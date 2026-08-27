@@ -60,15 +60,26 @@ The updater has a non-KeepAlive launchd job with `RunAtLoad`. A queued request t
 
 ## Reference-device bootstrap migration status
 
-The reference iOS 16 device currently runs the older v0.9.0 daemon/updater. A physical self-update attempt established the following boundary:
+The one-time physical **v0.9.0 -> v0.21.0** bootstrap migration is now proven on the reference iOS 16 Dopamine device.
 
-1. a newer RootTools DEB can be staged and SHA-256 verified;
-2. owner-confirmed `device.self-update.schedule` is accepted and persisted;
-3. the independent updater reaches preflight without replacing the serving runtime;
-4. the old launchd environment does not include the Procursus bootstrap tool paths;
-5. `dpkg-deb` therefore cannot resolve its `tar` dependency and metadata validation fails;
-6. the update fails before switch and the healthy v0.9.0 daemon remains running.
+The old v0.9 updater had two rootless-bootstrap defects:
 
-Newer source initializes the correct rootless bootstrap `PATH`, but that fix is inside the newer updater itself. This is therefore an updater-bootstrap migration problem, not a reason to expose a generic privileged command channel.
+1. its launchd environment omitted the Procursus tool paths, so `dpkg-deb` could not resolve `tar`;
+2. it addressed the RootTools LaunchDaemons in the macOS-style `system` domain rather than Dopamine's foreground-user domain.
 
-The remaining goal is one trusted migration from the physical v0.9 updater to the current updater while preserving R2 owner authorization, fixed payload validation, health verification and rollback. After that migration, normal RootTools upgrades should use the typed Self-Updater rather than repeated manual Sileo/Filza installation.
+`Scripts/migrate-v09-updater-path.py` resolves the one-time chicken-and-egg problem without adding a generic privileged execution surface. The Owner still creates the typed R2 self-update request against a staged, verified `com.arthur.roottools` DEB. The host then proves that its local DEB SHA-256 matches that staged record, extracts only the candidate updater from that package, and lets that fixed updater execute the existing allowlisted replacement/health/rollback protocol.
+
+Physical evidence after migration:
+
+- `/v1/status` reported `daemonVersion=0.21.0` and `uid=0`;
+- the update ledger recorded the v0.21 request as `succeeded` / `new daemon healthy`;
+- a clean daemon restart retained v0.21;
+- the foreground Root Tools App remained a valid bundle and was recoverable through LaunchServices/uicache registration.
+
+### v0.22 dispatcher hardening
+
+v0.21 exposed a second, later lifecycle issue: the daemon still spawned `roottools-updater` as a child process. On Dopamine, stopping the execd launchd service during a version switch can terminate that child, leaving the durable update row at `running/switching` before any target swap.
+
+v0.22 changes dispatch so `roottools-execd` kicks the separately registered `com.arthur.roottools.updater` launchd job instead of owning the updater process directly. This keeps the updater alive across execd bootout and adds more explicit switch/rollback diagnostics. v0.22 must be physically qualified separately; source readiness is not equivalent to a completed device upgrade.
+
+Foreground App registration is also now treated as a production update concern. A healthy daemon alone is not a complete Owner-facing update if SpringBoard/LaunchServices cannot discover the Root Tools app.

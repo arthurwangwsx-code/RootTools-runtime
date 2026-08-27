@@ -46,6 +46,16 @@ static const char *launchctl_path(void) {
     return "/var/jb/bin/launchctl";
 }
 
+static const char *launchd_domain(void) {
+    const char *override=getenv("ROOTTOOLS_LAUNCHD_DOMAIN");
+    if(override&&override[0])return override;
+    // Dopamine rootless LaunchDaemons are addressed through the foreground
+    // user bootstrap domain even though launchctl prints the concrete uid
+    // (for example user/501). macOS test hosts keep the normal system domain.
+    if(access("/var/jb",F_OK)==0)return "user/foreground";
+    return "system";
+}
+
 static int safe_id(const char *value) {
     size_t n=value?strlen(value):0;if(!n||n>120)return 0;
     for(size_t i=0;i<n;i++){
@@ -195,12 +205,15 @@ static int sign_file(const char *path) {
 }
 
 static int bootout_daemon(void) {
-    char *argv[]={(char*)"launchctl",(char*)"bootout",(char*)"system/com.arthur.roottools.execd",NULL};
+    char service[256]={0};
+    int n=snprintf(service,sizeof(service),"%s/com.arthur.roottools.execd",launchd_domain());
+    if(n<=0||(size_t)n>=sizeof(service))return 0;
+    char *argv[]={(char*)"launchctl",(char*)"bootout",service,NULL};
     int rc=spawn_timeout(launchctl_path(),argv,20);return rc==0||rc==3||rc==5;
 }
 
 static int bootstrap_daemon(void) {
-    char *argv[]={(char*)"launchctl",(char*)"bootstrap",(char*)"system",(char*)daemon_plist(),NULL};
+    char *argv[]={(char*)"launchctl",(char*)"bootstrap",(char*)launchd_domain(),(char*)daemon_plist(),NULL};
     return spawn_timeout(launchctl_path(),argv,20)==0;
 }
 

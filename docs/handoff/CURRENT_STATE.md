@@ -1,332 +1,240 @@
 # RootTools Current State
 
-> Living handoff document. Every Agent working on RootTools should read this file before changing code and update it when a stable milestone, device deployment boundary, or active workstream changes.
+> Living handoff document. Read this before changing RootTools and update it whenever a stable Git milestone, physical-device deployment boundary, or active workstream changes.
 
-Last refreshed: **2026-08-26 00:47 +08:00**
+Last refreshed: **2026-08-27 +08:00**
 
 ## 1. Product position
 
-RootTools is a **policy-controlled privileged iOS Device Runtime** for a jailbroken personal device. The SwiftUI app is the owner-facing control surface; the UID 0 daemon is the persistent execution node.
-
-The product is not a generic jailbreak shell and must not become one.
+RootTools is the policy-controlled privileged device runtime for a personally owned jailbroken iPhone. The SwiftUI app is the Owner control surface; the UID 0 daemon is the persistent execution node.
 
 Canonical flow:
 
-`RootTools UI / Mac Host / future Skill -> Command Gateway -> authenticated principal -> policy/grants -> durable task -> provider -> fixed privileged implementation -> post-condition -> receipt/audit`
+`RootTools UI / trusted Host / future Skill -> Command Gateway -> authenticated Principal -> policy/grants -> durable task -> fixed Provider -> post-condition -> receipt/audit`
 
-The current product shell is:
+RootTools is deliberately **not** a generic jailbreak shell. R3 and `device.raw-shell` remain hard-disabled. AiBox integration remains deferred while RootTools itself is hardened.
 
-- `Overview`
-- `Device`
-- `Tasks`
-- `Agents`
-- `Settings`
+## 2. Stable milestone chain
 
-The current priority is **RootTools itself**. AiBox integration is intentionally paused until the RootTools runtime, permission model, update path, device management and automation surfaces are mature.
-
-## 2. Stable Git checkpoint
-
-Latest stable code checkpoint:
-
-`ad66662 feat: add v0.18 installed package inventory`
-
-Recent milestone chain:
-
-| Version | Commit | Stable capability |
+| Version | Commit / state | Stable capability |
 | --- | --- | --- |
 | v0.10 | `b22f231` | Five-tab product shell + canonical Command Gateway |
 | v0.11 | `b43c28e` | Named command principals |
-| v0.12 | `1556600` | Per-principal R0/R1 capability grants |
+| v0.12 | `1556600` | Exact R0/R1 Principal grants |
 | v0.13 | `6e9c852` | Durable Device Task Runtime |
 | v0.14 | `c27ce90` | Semantic UI observe/tap/type/swipe foundation |
 | v0.15 | `d6bf5e8` | Permission profiles + Developer Mode |
-| v0.16 | `59f2b5c` | Structured device performance/resource observation |
-| v0.17 | `d5b1231` | Product App inventory/detail + process resource metrics |
-| v0.18 | `ad66662` | Read-only installed Procursus/dpkg package inventory |
+| v0.16 | `59f2b5c` | Structured performance/resource observation |
+| v0.17 | `d5b1231` | Product App inventory + process resource metrics |
+| v0.18 | `ad66662` | Device-wide read-only Procursus/dpkg inventory |
+| v0.19 | `168c379` | Remote Worker Mode |
+| v0.20 | `3f01efd` | Product-level Scoped Files Manager |
+| v0.21 | current checkpoint being committed | Trusted v0.9 bootstrap migration + Dopamine launchd-domain fixes |
 
-Source/package default at the stable checkpoint is **v0.18.0 / 0.18.0-1**.
+The physical v0.21 deployment is the first post-v0.9 RootTools runtime that has been proven healthy on the reference device.
 
-## 3. Reference physical-device state
+## 3. Reference physical-device truth
 
-Reference device facts currently verified from Device Service:
+Verified through Device Service on 2026-08-27:
 
 - hardware: iPhone 13 Pro Max (`iPhone14,3`)
 - iOS: 16.3.1 / build `20D67`
 - jailbreak: Dopamine rootless
-- daemon privilege: UID 0
+- physical daemon: **v0.21.0**
+- daemon privilege: **UID 0**
+- device state during qualification: unlocked / screen visible
 - SSH: ready
 - Frida: ready
 - ZXTouch: ready
 - headless execution: ready
-- UI execution: ready when unlocked
+- UI execution: ready while unlocked
+- Tailscale iOS app: installed, v1.102.3, running as mobile UID 501
+- current Wi-Fi address observed during qualification: local-LAN only; do not treat it as a durable remote endpoint
 
-**Important deployment boundary:** the physical device still runs **RootTools daemon v0.9.0**. Do not claim v0.10-v0.18 physical validation until `/v1/status` reports the new version after a trusted deployment.
+The v0.9 bootstrap migration completed successfully through a verified candidate updater. The update ledger records the v0.21 request as `succeeded` with `new daemon healthy`.
 
-Do not hard-code the device identifier in docs or code. Discover the connected device through `Scripts/device_service.py` / pymobiledevice3 tooling.
+The Root Tools foreground app is also present and usable. During the migration/update work the App bundle remained on disk but temporarily disappeared from the Home Screen because LaunchServices/SpringBoard registration was stale. `uicache` re-registration plus SpringBoard refresh restored the visible app. Treat foreground App registration as an update post-condition, not merely a packaging detail.
 
-## 4. Architecture invariants
+Do not hard-code the physical UDID in docs or source. Discover it through the host tooling.
 
-These are product invariants, not temporary implementation choices.
+## 4. Stable product capabilities through v0.21
 
-### 4.1 No raw privileged execution surface
+### 4.1 Permission and trust model
 
-Never expose:
+Effective authority composes:
 
-- arbitrary shell;
-- caller-supplied executable path;
-- caller-supplied argv;
-- arbitrary Frida scripts/attach;
-- arbitrary ElleKit hook/injection;
-- direct UID 0 inheritance for Agent callers.
+`Hard Policy -> Owner Policy Mode -> Principal Grant -> R2 Approval -> Runtime Conditions -> Provider/Post-condition`
 
-Callers request semantic capabilities. The daemon chooses a fixed implementation provider.
+Owner profiles:
 
-### 4.2 Risk model
+- Restricted
+- Standard
+- Developer
+- Custom
 
-- **R0**: observation/read-only;
-- **R1**: bounded/reversible/scoped mutation;
-- **R2**: owner-authorized sensitive mutation;
-- **R3**: device-critical or unrestricted privileged execution, hard-disabled.
+Developer Mode enables the compiled non-R3 Owner surface and local Owner R2 auto-approval. It does **not** grant R3/raw shell and does **not** widen Host/App/Skill/Automation Principal grants.
 
-`device.raw-shell` and R3 remain hard-disabled even in Developer Mode.
+### 4.2 Device observation
 
-### 4.3 Principal identity and grants
+Structured observation includes:
 
-Named principals represent `host`, `app`, `skill`, or `automation` callers.
+- system/daemon health and version
+- jailbreak/provider readiness
+- lock/display/headless/UI readiness
+- uptime/load average
+- VM memory distribution
+- root/var free storage
+- daemon RSS
+- process/task counts
+- network interface facts
+- TCC/runtime diagnostics
 
-- creating a principal creates identity/authentication only;
-- new principals begin with **zero delegated capability grants**;
-- persistent grants may target exact compiled **R0/R1** capability IDs only;
-- grants may expire;
-- revocation/expiry is re-checked before queued work executes;
-- a remote principal cannot self-assert R2 owner approval.
+### 4.3 Applications
 
-### 4.4 Owner permission profiles
+The product can enumerate and inspect system, jailbreak and user applications with:
 
-v0.15 defines four owner policy modes:
+- display name
+- Bundle ID
+- version/build when available
+- source
+- bundle path/executable
+- running/critical state
+- typed launch and terminate actions
 
-- **Restricted**: observation-oriented recovery surface;
-- **Standard**: normal R0/R1 plus explicit R2 confirmation;
-- **Developer**: enables the full compiled non-R3 Owner surface and allows the **local Owner UI only** to auto-approve R2;
-- **Custom**: manual per-capability policy changes.
+The reference phone currently exposes more than 200 application records through the structured App surface.
 
-Developer Mode does **not** widen any Named Principal grant.
+### 4.4 Processes
 
-### 4.5 Durable task runtime
+Structured process facts include PID/UID/command/critical/privileged state plus best-effort Darwin `proc_pid_rusage` metrics:
 
-Canonical task states include:
+- resident memory / physical footprint
+- user/system CPU time
+- disk read/write
+- page-ins
+- idle/interrupt wakeups
 
-- `queued`
-- `waiting_for_unlock`
-- `running`
-- `retrying`
-- `completed`
-- `failed`
-- `cancelled`
+Unsupported process metrics degrade with `metricsAvailable=false` rather than failing the entire catalog.
 
-UI work waits for an unlocked/visible device. RootTools does not bypass the passcode. Authorization is re-checked immediately before execution.
+### 4.5 Packages
 
-### 4.6 Provider plane
+Package Controller supports:
 
-Semantic capability IDs bind to daemon-owned providers such as:
+- bounded DEB / IPA / TIPA staging
+- SHA-256 verification
+- package identity verification
+- fixed install providers
+- RootTools-managed uninstall
+- retained-artifact rollback
+- lifecycle history
+- device-wide read-only Procursus/dpkg inventory
+- separate RootTools Self-Updater
 
-- Darwin/native APIs;
-- Dopamine/Procursus;
-- TrollStore/Sileo;
-- Frida/ElleKit observation;
-- SpringBoard;
-- ZXTouch;
-- TCC;
-- RootTools control/updater providers.
+Global dpkg visibility is observation-only. It does not create authority for arbitrary device-wide uninstall.
 
-Provider internals must remain invisible to Agent callers.
+### 4.6 Scoped Files Manager
 
-## 5. Stable capability surfaces through v0.18
+v0.20 provides a product Files page over declared `mobile` and `bootstrap` scopes only:
 
-### Device and runtime
+- nested directory navigation
+- metadata/search
+- bounded text read/edit/create
+- path-segment validation
+- `openat` + `O_NOFOLLOW` traversal
+- no absolute caller-selected root
+- no symlink following
 
-- system/daemon health;
-- lock/display readiness;
-- jailbreak/provider status;
-- network facts;
-- TCC facts;
-- filesystem scopes;
-- diagnostics/audit/events;
-- performance snapshot: uptime, load average, VM memory distribution, storage, daemon resident memory, process count, active tasks and Provider readiness.
+### 4.7 Remote Worker
 
-### Applications
+v0.19 provides:
 
-Structured App inventory/detail includes:
+- `device.remote-worker.observe` (R0)
+- `device.remote-worker.configure` (R2)
+- bounded always-awake assertion
+- Owner-configured low-brightness target
+- battery percentage, charging/external-power, cycle count and battery-health observation
+- battery temperature and thermal pause/resume hysteresis
+- UI Task Runtime thermal gating
+- fail-safe pause when required temperature telemetry is unavailable
 
-- display name;
-- Bundle ID;
-- version;
-- build;
-- source (`system`, `jailbreak`, `user`);
-- bundle path;
-- executable;
-- running/critical state.
+Charge-control mutation remains unavailable until a reversible device-specific mechanism is physically verified.
 
-### Processes
+### 4.8 Durable tasks and UI automation
 
-Structured process management includes PID/UID/command/critical/privileged facts and, when Darwin exposes `proc_pid_rusage`, resource facts:
+Task states include `queued`, `waiting_for_unlock`, `running`, `retrying`, `completed`, `failed`, and `cancelled`.
 
-- resident bytes;
-- physical footprint;
-- user/system CPU time;
-- disk read/write bytes;
-- page-ins;
-- idle/interrupt wakeups.
+The scheduler prefers runnable `queued`/`retrying` work ahead of already-blocked `waiting_for_unlock` work. This prevents one locked UI task from starving later queued UI tasks; all UI-required work can advance to the explicit waiting state while the phone is locked.
 
-### Packages
-
-Stable Package Controller already supports:
-
-- DEB / IPA / TIPA bounded staging;
-- SHA-256 verification;
-- package identity verification;
-- fixed Procursus/TrollStore install providers;
-- managed uninstall;
-- retained-artifact rollback;
-- lifecycle history;
-- read-only installed Procursus/dpkg inventory via `GET /v1/packages/installed`, including package ID, version, architecture, section, priority, first-line description, installed size and Essential metadata;
-- separate RootTools Self-Updater path.
-
-The installed-device inventory is observation only. Seeing a package in the dpkg inventory does not create a RootTools lifecycle record and does not authorize device-wide uninstall or rollback. Mutation remains limited to RootTools-managed package records.
-
-### UI automation
-
-Stable semantic foundation:
+Stable UI semantics:
 
 - `device.ui.observe`
 - `device.ui.tap`
 - `device.ui.type`
 - `device.ui.swipe`
 
-Current implementation uses fixed ZXTouch semantics internally. Accessibility/selector/vision-level element targeting is still future work.
+ZXTouch is an internal Provider. Locked UI work waits; RootTools does not bypass the passcode. Accessibility/selector/vision semantic targeting is still future P4 work.
 
-## 6. Current uncommitted working tree
+## 5. v0.21 bootstrap migration result
 
-**Do not reset or clean the checkout.** The Installed Package Inventory workstream is now stable in `ad66662`; the checkout still contains the separate Remote Worker WIP in shared files.
+The old physical v0.9 updater had two independent rootless deployment defects:
 
-At the time of this handoff, modified/untracked paths include:
+1. its launchd environment could not resolve Procursus `tar` for `dpkg-deb`;
+2. it addressed Dopamine LaunchDaemons using the macOS-style `system` domain instead of the foreground-user bootstrap domain.
 
-- `App/DaemonClient.swift`
-- `App/DashboardView.swift`
-- `App/Models.swift`
-- `Daemon/control_plane.c`
-- `Daemon/provider_registry.c`
-- `Daemon/roottools_execd.c`
-- `Scripts/build.sh`
-- `Scripts/device_service.py`
-- `Scripts/test.sh`
-- `Tests/http_contract_test.py`
-- `Tests/provider_registry_test.c`
-- `App/RemoteWorkerView.swift` (new)
-- `Daemon/remote_worker_controller.c/.h` (new)
-- `Tests/remote_worker_controller_test.c` (new)
+The one-time migration path preserves the RootTools trust model:
 
-### 6.1 Workstream A — Installed Package Inventory
+- the Owner still schedules the typed R2 `device.self-update.schedule` operation;
+- the staged package must be a verified `com.arthur.roottools` DEB;
+- local DEB SHA-256 must match the staged device record;
+- the migration extracts only the candidate updater from that approved DEB;
+- the updater still owns package identity validation, extraction allowlist, target swapping, health verification and rollback;
+- no generic caller-supplied privileged command is added to the protocol.
 
-Completed and independently committed as **v0.18** in `ad66662`.
+Host tooling also now avoids importing `pymobiledevice3` when `idevice_id`/`iproxy` are already available, so standard libimobiledevice hosts do not fail merely because the Python fallback package is absent.
 
-The stable implementation includes:
+## 6. Next v0.22 workstream
 
-- `rt_installed_packages_json()` in Package Controller;
-- read-only parsing of `/var/jb/Library/dpkg/status` with test-only `ROOTTOOLS_DPKG_STATUS` override;
-- exact filtering to `Status: install ok installed`;
-- `GET /v1/packages/installed` protected by the existing R0 `device.package.list` read capability;
-- explicit `source=procursus-dpkg` and `status=installed` projection;
-- HTTP and unit fixtures;
-- Swift models and `DaemonClient` integration;
-- searchable/filterable Installed-on-device section in the Packages product page;
-- Mac Device Service command `package-installed`;
-- validation record `docs/validation/v0.18-installed-package-inventory.md`;
-- version/package bump to `0.18.0 / 0.18.0-1`.
+The next Self-Updater hardening increment is **v0.22**.
 
-Security boundary remains unchanged: global dpkg visibility does **not** expose global package mutation. Generic uninstall/rollback still operates only on RootTools-managed lifecycle records.
+Why it exists: v0.21 still dispatches `roottools-updater` as a child process of `roottools-execd`. On Dopamine, stopping the execd launchd service during the switch can terminate that updater before it swaps targets. A physical v0.22 attempt demonstrated the stale `running/switching` symptom while the healthy v0.21 daemon remained active.
 
-### 6.2 Workstream B — Remote Worker
+The planned v0.22 source changes move dispatch to the separately registered `com.arthur.roottools.updater` launchd job and add clearer transition/rollback diagnostics. This work must be independently validated and committed after the v0.21 checkpoint; do not describe v0.22 as physically deployed until `/v1/status` returns `0.22.0`.
 
-Concurrent uncommitted WIP, **not part of v0.18**.
+## 7. Network / off-USB execution boundary
 
-Current implementation includes:
+RootTools currently has the pieces needed for remote operation, but the security architecture intentionally separates **transport** from **privilege**.
 
-- `device.remote-worker.observe` (R0);
-- `device.remote-worker.configure` (R2);
-- `remote_worker_controller.c/.h`;
-- owner UI `RemoteWorkerView.swift`;
-- always-on/display policy;
-- low-brightness behavior;
-- battery/temperature/cycle/health observations;
-- charge-guard related state;
-- thermal gating of UI work;
-- host CLI entries;
-- unit/HTTP/provider tests.
+Today:
 
-The latest mixed working-tree contract suite passes, including `remote_worker_controller_test`.
+- USB/usbmux is the qualified direct Host transport.
+- SSH, Frida and ZXTouch are available locally on the jailbroken device.
+- Tailscale is installed and running on the phone.
+- RootTools Device Service itself remains loopback-only; it is not exposed as a public WAN/root listener.
 
-This workstream touches many shared integration files. It must be extracted into its own commit(s) and isolated from Package Inventory changes.
+Therefore taking the phone away from USB does **not** mean the Host should connect to an open RootTools port on the internet. The intended next production path is either:
 
-### 6.3 Files Manager
+1. a Tailscale/private-overlay transport bridge from the trusted Host to the phone, with RootTools semantic commands remaining behind scoped Principal credentials; or
+2. the planned outbound authenticated Network Relay initiated by RootTools, so no privileged inbound public port exists.
 
-Not yet implemented as a product-level page.
-
-Existing safe primitives are already present:
-
-- declared `mobile` and `bootstrap` scopes;
-- bounded list/read/write;
-- safe filename validation;
-- `O_NOFOLLOW` protections;
-- no arbitrary caller-supplied filesystem root.
-
-Next step is a structured scope browser/editor using only those declared capabilities. Do not turn Files Manager into an arbitrary root file explorer API.
-
-## 7. Current Self-Updater migration blocker
-
-The new Self-Updater architecture is correct, but the reference device runs the old **v0.9.0 updater**.
-
-Observed physical failure:
-
-1. Mac can stage a newer RootTools DEB through Device Service;
-2. Owner R2 self-update scheduling succeeds and becomes durable;
-3. old updater reaches preflight;
-4. old launchd environment does not include the Procursus tool paths;
-5. `dpkg-deb` cannot find its `tar` dependency;
-6. update fails safely before system switch; v0.9.0 remains healthy.
-
-Newer source initializes the correct rootless bootstrap `PATH`, but this is an **updater-updates-updater bootstrap problem**: the old updater cannot benefit from a fix that is only present in the new updater.
-
-Do not bypass this by exposing or disguising a raw root command. The desired result is one controlled migration, after which future versions use typed self-update with health check and rollback.
-
-See `docs/architecture/self-updater.md`.
+Remote R0/R1 work can eventually be unattended within explicit Principal grants. R2 still requires Owner approval or a future bounded one-shot/workflow approval mechanism. UI work also requires the phone to be unlocked and thermally eligible.
 
 ## 8. Validation truth
 
-Latest stable v0.18 was validated independently from the concurrent Remote Worker WIP:
+Stable v0.19 and v0.20 have their own validation records under `docs/validation/`.
 
-- full C/unit/HTTP contract suite: PASS;
-- iOS 16 Release: `BUILD SUCCEEDED`;
-- rootless DEB packaging: PASS (`roottools_0.18.0-1_iphoneos-arm64.deb`);
-- validation was performed from exact Git index tree `185fe1263c3da1b5d89abb88abfbf0e5710f431a` in an isolated managed worktree containing only the v0.18 staged changes;
-- the generated validation DEB SHA-256 was `9176ec312b3245377719c3020c25a5dd2a9e8f15a242363785bcbeec3ccea93b`.
+Physical v0.21 evidence includes:
 
-The **current mixed working tree** was also re-tested at handoff time and passes:
+- `/v1/status`: `daemonVersion=0.21.0`, `uid=0`
+- jailbreak rootless ready
+- SSH / Frida / ZXTouch ready
+- headless and unlocked UI execution ready
+- performance endpoint returns structured data
+- Scoped Files roots return correctly
+- Remote Worker observation returns battery/thermal/power facts
+- App/process/package catalogs return structured device inventories
+- Self-Updater ledger records the v0.21 transition as `succeeded / new daemon healthy`
+- foreground Root Tools app was re-registered and is visible/openable after SpringBoard refresh
 
-- `control_plane_test`
-- `provider_registry_test`
-- `package_controller_test`
-- `update_controller_test`
-- `runtime_observer_test`
-- `remote_worker_controller_test`
-- `principal_store_test`
-- `package_builder_test`
-- `http_contract_test`
-- `RootTools contract tests`
-
-The mixed tree was contract-tested before the v0.18 extraction, but the **stable v0.18 claim comes only from the isolated index snapshot**. Remote Worker still requires its own isolated validation before it becomes stable.
-
-Canonical checks:
+Canonical source validation remains:
 
 ```bash
 bash Scripts/test.sh
@@ -339,34 +247,20 @@ Never print or commit token contents.
 
 ## 9. Build/development notes
 
-- project target remains iOS 16+;
-- `xcodegen` is currently available at `/opt/homebrew/bin/xcodegen`; the v0.18 isolated Release validation regenerated the project from `project.yml` rather than relying on the ignored local project;
-- Release builds use Swift whole-module optimization and can be slow as product UI grows;
-- do not interpret a long-running high-CPU `swift-frontend` as a hang without checking the process first;
-- the ignored/local Xcode project may be changed by concurrent work; for clean validation, use an isolated worktree/index snapshot or regenerate the project when xcodegen is available.
+- target remains iOS 16+;
+- xcodegen is available at `/opt/homebrew/bin/xcodegen` on the current Host;
+- Release Swift whole-module compilation can be CPU-heavy without being hung;
+- regenerate the project from `project.yml` for clean validation when needed;
+- the host usbmux fallback may use pymobiledevice3, but it is no longer an unconditional import dependency when libimobiledevice tools exist.
 
-## 10. Immediate RootTools priorities
+## 10. Immediate priorities
 
-Order of work after this handoff:
+1. commit the physically proven v0.21 bootstrap/launchd migration checkpoint;
+2. finish and independently validate v0.22 launchd-owned updater dispatch and stale-update recovery;
+3. make App registration a formal Self-Updater post-condition so a successful daemon upgrade cannot leave the Owner app missing from SpringBoard;
+4. qualify Tailscale/private-overlay remote transport without exposing RootTools as a public privileged listener;
+5. deepen Accessibility/selector/vision UI automation;
+6. deepen Task Runtime into Workflow / Trigger / Retry / Result semantics;
+7. continue reboot/re-jailbreak/crash-loop recovery and Production 1.0 hardening.
 
-1. finish and independently commit Remote Worker from the remaining dirty WIP;
-2. implement product-level scoped Files Manager;
-3. solve the production-blocking v0.9 -> current Self-Updater bootstrap migration without exposing raw privileged execution;
-4. deploy one consolidated stable build to the reference iPhone and run physical qualification;
-5. deepen UI automation to Accessibility/selector/vision semantics;
-6. deepen Task Runtime into multi-step Workflow/Trigger/Retry/Result semantics;
-7. continue device-management completeness: package/app recovery, diagnostics, crash/reboot/bootstrap recovery and production 1.0 hardening.
-
-AiBox and Network Skill integration remain deferred until the RootTools runtime itself reaches this maturity.
-
-## 11. Commit discipline for concurrent Agents
-
-- never use `git add -A` while independent WIP is present;
-- do not reset/revert another Agent's files;
-- inspect `git diff` and classify hunks before staging shared files;
-- use explicit pathspec or index-blob/hunk staging when workstreams overlap;
-- run tests from the **exact staged snapshot** before committing a mixed-file milestone;
-- prefer managed worktrees for truly parallel development;
-- keep each milestone versioned, documented and independently revertible.
-
-The v0.18 extraction is the current reference example: Package Inventory hunks were selectively staged out of files concurrently modified by Remote Worker, the staged diff was checked for Remote Worker contamination, then the exact index snapshot independently passed contracts, iOS 16 Release, and rootless DEB packaging before commit.
+AiBox remains deferred until these RootTools runtime and remote-operation boundaries are stable.

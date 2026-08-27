@@ -10,13 +10,29 @@ from __future__ import annotations
 
 import asyncio
 import contextlib
+import shutil
 import socket
+import subprocess
 import threading
 
-from pymobiledevice3.usbmux import select_device
+
+def _pymobiledevice_select_device():
+    """Import pymobiledevice3 only when the built-in usbmux fallback is used.
+
+    Hosts with libimobiledevice's `idevice_id` + `iproxy` should not need the
+    Python package merely to import RootTools host tooling.
+    """
+    try:
+        from pymobiledevice3.usbmux import select_device
+    except ModuleNotFoundError as error:
+        raise RuntimeError(
+            "pymobiledevice3 is required only when idevice_id/iproxy are unavailable"
+        ) from error
+    return select_device
 
 
 async def _select(udid: str | None):
+    select_device = _pymobiledevice_select_device()
     device = await select_device(udid)
     if device is None:
         raise RuntimeError("No USB iPhone found")
@@ -24,6 +40,11 @@ async def _select(udid: str | None):
 
 
 def discover_udid() -> str:
+    idevice_id = shutil.which("idevice_id")
+    if idevice_id:
+        lines = subprocess.check_output([idevice_id, "-l"], text=True).splitlines()
+        if lines:
+            return lines[0]
     return asyncio.run(_select(None)).serial
 
 

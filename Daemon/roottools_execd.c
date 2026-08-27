@@ -39,7 +39,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.20.0"
+#define VERSION "0.21.0"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -554,7 +554,8 @@ static int task_next(
     sqlite3_stmt *statement=NULL;
     int rc=sqlite3_prepare_v2(db,
         "SELECT task_id,kind,target,caller,capability_id,payload_json,attempt_count,requires_ui,state FROM device_tasks "
-        "WHERE state IN ('queued','waiting_for_unlock','retrying') ORDER BY created_at LIMIT 1",
+        "WHERE state IN ('queued','waiting_for_unlock','retrying') "
+        "ORDER BY CASE state WHEN 'queued' THEN 0 WHEN 'retrying' THEN 1 ELSE 2 END, created_at LIMIT 1",
         -1,&statement,NULL);
     if(rc==SQLITE_OK)rc=sqlite3_step(statement);
     int ok=0;
