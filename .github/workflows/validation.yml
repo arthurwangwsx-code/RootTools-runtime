@@ -1,17 +1,24 @@
 name: RootTools Validation
 
 on:
-  pull_request:
-  push:
-    branches:
-      - main
+  workflow_dispatch:
 
 jobs:
-  tests:
+  repository-hygiene:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
         uses: actions/checkout@v4
 
-      - name: Run contract suite
-        run: bash Scripts/test.sh
+      - name: Repository hygiene
+        run: |
+          git diff --check
+          bash -n Scripts/*.sh
+          python3 -m py_compile Scripts/*.py
+          test ! -e .roottools-token
+          test ! -e .roottools-agent-token
+
+      - name: Explain full validation boundary
+        run: |
+          echo "Full iOS/daemon validation is intentionally local-only."
+          echo "Run: bash Scripts/test.sh && bash Scripts/build.sh"

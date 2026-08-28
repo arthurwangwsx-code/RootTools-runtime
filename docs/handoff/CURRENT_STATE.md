@@ -2,7 +2,7 @@
 
 > Living handoff document. Read this before changing RootTools and update it whenever a stable Git milestone, physical-device deployment boundary, or active workstream changes.
 
-Last refreshed: **2026-08-27 +08:00**
+Last refreshed: **2026-08-28 +08:00**
 
 ## 1. Product position
 
@@ -29,9 +29,10 @@ RootTools is deliberately **not** a generic jailbreak shell. R3 and `device.raw-
 | v0.18 | `ad66662` | Device-wide read-only Procursus/dpkg inventory |
 | v0.19 | `168c379` | Remote Worker Mode |
 | v0.20 | `3f01efd` | Product-level Scoped Files Manager |
-| v0.21 | current checkpoint being committed | Trusted v0.9 bootstrap migration + Dopamine launchd-domain fixes |
+| v0.21 | `946f894` | Trusted v0.9 bootstrap migration + Dopamine launchd-domain fixes |
+| v0.22 | `f0559ec` | Remote Access session + updater hardening + task scheduler fairness |
 
-The physical v0.21 deployment is the first post-v0.9 RootTools runtime that has been proven healthy on the reference device.
+The physical v0.21 deployment is the first post-v0.9 RootTools runtime that has been proven healthy on the reference device. v0.22 is source/contract/Release-build validated but still requires physical deployment and off-USB Tailnet qualification.
 
 ## 3. Reference physical-device truth
 
@@ -57,7 +58,7 @@ The Root Tools foreground app is also present and usable. During the migration/u
 
 Do not hard-code the physical UDID in docs or source. Discover it through the host tooling.
 
-## 4. Stable product capabilities through v0.21
+## 4. Stable source capabilities through v0.22
 
 ### 4.1 Permission and trust model
 
@@ -191,35 +192,52 @@ The one-time migration path preserves the RootTools trust model:
 
 Host tooling also now avoids importing `pymobiledevice3` when `idevice_id`/`iproxy` are already available, so standard libimobiledevice hosts do not fail merely because the Python fallback package is absent.
 
-## 6. Next v0.22 workstream
+## 6. v0.22 source milestone
 
-The next Self-Updater hardening increment is **v0.22**.
+v0.22 is committed and source validated.
 
-Why it exists: v0.21 still dispatches `roottools-updater` as a child process of `roottools-execd`. On Dopamine, stopping the execd launchd service during the switch can terminate that updater before it swaps targets. A physical v0.22 attempt demonstrated the stale `running/switching` symptom while the healthy v0.21 daemon remained active.
+It includes:
 
-The planned v0.22 source changes move dispatch to the separately registered `com.arthur.roottools.updater` launchd job and add clearer transition/rollback diagnostics. This work must be independently validated and committed after the v0.21 checkpoint; do not describe v0.22 as physically deployed until `/v1/status` returns `0.22.0`.
+- updater dispatch through the separately registered `com.arthur.roottools.updater` launchd job instead of relying on the serving execd child lifetime;
+- clearer update transition/rollback diagnostics;
+- foreground app registration/discoverability as a deployment health requirement;
+- scheduler fairness so blocked `waiting_for_unlock` UI work does not starve later queued tasks;
+- Owner-initiated Remote Access sessions bound only to a Tailscale IPv4 address;
+- one selected active Named Host Principal per Remote Session;
+- remote-listener rejection of Owner and legacy Agent credentials;
+- bounded session expiry and automatic invalidation when the selected Principal is no longer valid.
+
+Do not describe v0.22 as physically qualified until the reference device reports v0.22 and an off-USB Tailnet session has passed the remote regression.
 
 ## 7. Network / off-USB execution boundary
 
 RootTools currently has the pieces needed for remote operation, but the security architecture intentionally separates **transport** from **privilege**.
 
-Today:
+Today in v0.22 source:
 
 - USB/usbmux is the qualified direct Host transport.
 - SSH, Frida and ZXTouch are available locally on the jailbroken device.
 - Tailscale is installed and running on the phone.
-- RootTools Device Service itself remains loopback-only; it is not exposed as a public WAN/root listener.
+- the normal RootTools Device Service remains loopback-only;
+- an Owner may explicitly start a bounded Remote Session;
+- that listener binds only to a detected Tailscale IPv4 address and accepts only the selected Named Host Principal.
 
-Therefore taking the phone away from USB does **not** mean the Host should connect to an open RootTools port on the internet. The intended next production path is either:
+Therefore taking the phone away from USB does **not** mean exposing a UID 0 service to the public internet. The qualified direction is the private Tailnet session path. Remote R0/R1 work remains limited to exact Principal grants. R2 still requires Owner authorization or a future bounded one-shot/workflow approval mechanism. UI work also requires the phone to be unlocked and thermally eligible.
 
-1. a Tailscale/private-overlay transport bridge from the trusted Host to the phone, with RootTools semantic commands remaining behind scoped Principal credentials; or
-2. the planned outbound authenticated Network Relay initiated by RootTools, so no privileged inbound public port exists.
-
-Remote R0/R1 work can eventually be unattended within explicit Principal grants. R2 still requires Owner approval or a future bounded one-shot/workflow approval mechanism. UI work also requires the phone to be unlocked and thermally eligible.
+The latest off-USB discovery also established an important bootstrap fact: if Tailscale itself is already offline and there is no USB/LAN path, RootTools cannot remotely make an unreachable phone reconnect. The Owner must restore one transport bootstrap before a Remote Session can be reached.
 
 ## 8. Validation truth
 
 Stable v0.19 and v0.20 have their own validation records under `docs/validation/`.
+
+v0.22 source validation includes:
+
+- complete `Scripts/test.sh`: PASS;
+- Remote Access controller unit contract: PASS;
+- provider/update/principal contracts: PASS;
+- HTTP Remote Access authorization contract: PASS;
+- iOS 16 Release build: `BUILD SUCCEEDED`;
+- rootless package produced as `roottools_0.22.0-3_iphoneos-arm64.deb`.
 
 Physical v0.21 evidence includes:
 
@@ -252,15 +270,19 @@ Never print or commit token contents.
 - Release Swift whole-module compilation can be CPU-heavy without being hung;
 - regenerate the project from `project.yml` for clean validation when needed;
 - the host usbmux fallback may use pymobiledevice3, but it is no longer an unconditional import dependency when libimobiledevice tools exist.
+- canonical repository: `arthurwangwsx-code/RootTools-runtime`;
+- repository visibility: public;
+- full tests/build/release packaging run locally on the maintainer Mac;
+- GitHub Actions is manual-only and limited to lightweight repository hygiene;
+- GitHub Releases is the canonical public binary distribution channel.
 
 ## 10. Immediate priorities
 
-1. commit the physically proven v0.21 bootstrap/launchd migration checkpoint;
-2. finish and independently validate v0.22 launchd-owned updater dispatch and stale-update recovery;
-3. make App registration a formal Self-Updater post-condition so a successful daemon upgrade cannot leave the Owner app missing from SpringBoard;
-4. qualify Tailscale/private-overlay remote transport without exposing RootTools as a public privileged listener;
-5. deepen Accessibility/selector/vision UI automation;
-6. deepen Task Runtime into Workflow / Trigger / Retry / Result semantics;
-7. continue reboot/re-jailbreak/crash-loop recovery and Production 1.0 hardening.
+1. publish and install the canonical v0.22 Runtime release on the remote reference device;
+2. qualify Tailscale Remote Session end-to-end with USB disconnected;
+3. verify session expiry/stop/revoke behavior and R0/R1 remote task execution physically;
+4. deepen Accessibility/selector/vision UI automation;
+5. deepen Task Runtime into Workflow / Trigger / Retry / Result semantics;
+6. continue reboot/re-jailbreak/crash-loop recovery and Production 1.0 hardening.
 
 AiBox remains deferred until these RootTools runtime and remote-operation boundaries are stable.

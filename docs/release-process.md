@@ -10,9 +10,12 @@ The maintainer Mac performs:
 2. iOS Release build
 3. Rootless DEB packaging
 4. SHA256 generation
-5. GitHub Release upload
+5. Git tag creation
+6. GitHub Release upload
 
-GitHub Actions is only used for lightweight validation and release metadata.
+GitHub Actions does not perform automatic builds. The remaining workflow is
+manual-only and limited to lightweight repository hygiene so normal pushes do
+not consume hosted runner minutes.
 
 ## Local release
 
@@ -20,15 +23,30 @@ GitHub Actions is only used for lightweight validation and release metadata.
 Scripts/release-local.sh 0.23.0-1
 ```
 
-The script validates, builds, packages and prepares checksums.
+The script requires a clean working tree, runs the full local validation/build,
+packages the exact Debian version, generates checksums, creates/pushes the
+annotated tag, and creates the GitHub Release with the DEB, checksum and install
+guide.
 
-## Upload
+When the exact artifact was already built and validated locally, publishing
+can skip rebuilding:
 
 ```bash
-gh release create v0.23.0 \
-  build/packages/*.deb \
-  build/release/SHA256SUMS
+Scripts/release-local.sh 0.23.0-1 --skip-build
 ```
+
+## Result
+
+The canonical tag/release format is `vX.Y.Z-N`, matching the Debian package
+version. Release assets are:
+
+- `roottools_X.Y.Z-N_iphoneos-arm64.deb`
+- `SHA256SUMS`
+- `INSTALL.md`
+- `CHANGELOG.md`
+
+The GitHub Releases page is the only public binary distribution source for
+RootTools Runtime.
 
 ## Rationale
 

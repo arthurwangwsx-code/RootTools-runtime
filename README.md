@@ -1,83 +1,147 @@
-# RootTools iOS
+# RootTools Runtime
 
-Independent iOS 16+ jailbreak device control plane for personal devices.
+RootTools Runtime is a policy-controlled privileged device runtime for **iOS 16+ Dopamine/rootless jailbreak devices**. It combines an Owner-facing SwiftUI app with a persistent UID 0 daemon and exposes typed device capabilities instead of a general-purpose root shell.
 
-## Architecture direction
+> This repository is the canonical RootTools Runtime product line and release source. The older `RootTools` repository is no longer the distribution source for this runtime.
 
-RootTools is evolving from a privileged toolbox into a policy-controlled iOS Device Control Plane. The daemon owns capability metadata, risk policy, semantic action routing, audit receipts, and post-condition verification. UI, future automation, and future Agent adapters call typed capabilities rather than receiving a raw privileged shell.
+## What it does
 
-- Product definition: `docs/product/product-definition.md`
-- Current project/handoff state: `docs/handoff/CURRENT_STATE.md`
-- Agent handoff snapshot: `docs/handoff/AGENT_HANDOFF_2026-08-25.md`
-- Long-term roadmap: `docs/roadmap/long-term-roadmap.md`
-- Control Plane architecture: `docs/architecture/control-plane.md`
-- Command Gateway: `docs/architecture/command-gateway.md`
-- Provider / Adapter architecture: `docs/architecture/provider-adapter.md`
-- Package Controller architecture: `docs/architecture/package-controller.md`
-- Product information architecture: `docs/ux/product-information-architecture.md`
-- P1 implementation plan: `docs/phases/p1-control-plane.md`
+RootTools currently provides:
 
-The first milestone intentionally kept the privileged surface read-only: device health, jailbreak runtime, apps, processes, selected root filesystem views, network observation, and diagnostics.
+- layered permission policy: Hard Policy → Owner Profile → Principal Grants → runtime conditions;
+- Restricted / Standard / Developer / Custom Owner modes;
+- structured device, performance, storage, battery, thermal, app and process observation;
+- application launch/terminate and durable lock-aware task execution;
+- read-only Procursus/dpkg package inventory;
+- verified DEB / IPA / TIPA staging and RootTools-managed package lifecycle;
+- scoped Files Manager over declared `mobile` and `bootstrap` roots;
+- Remote Worker mode with display assertion, low-brightness target and thermal gating;
+- semantic UI operations (`observe`, `tap`, `type`, `swipe`) through a fixed ZXTouch provider;
+- independent RootTools self-update with allowlisted payload switching, health checks and rollback;
+- opt-in Remote Access sessions bound to a Tailscale address and one Named Host Principal.
 
-The second milestone adds a deliberately small set of typed privileged operations: app launch/terminate, bounded non-root process termination, UTF-8 reads/writes inside dedicated RootTools directories, capability/risk inspection, and an append-only privileged audit log. The UI still talks only to a loopback-only typed root daemon; it does not expose a general root shell to the app or an Agent.
+RootTools deliberately does **not** expose arbitrary caller-provided shell commands, executable paths, argv, Frida scripts, ElleKit injection or R3 device-critical execution.
 
-The policy is intentionally asymmetric: R0 observation is broad, R1 writes are reversible and scoped, R2 process termination requires explicit UI confirmation and is rejected for UID 0/critical processes, and R3 device-critical operations are not exposed.
+## Architecture
 
-See `docs/architecture/v0.2-controlled-actions.md` for the capability matrix and physical-device validation contract.
-
-P1 Control Plane is now complete on the `v0.3.0` development line: registry-driven Capability/Policy/Router core, unified action receipts, daemon-side R2 confirmation, post-condition verification, structured execution events, credential-role separation, and v0.2 action URLs retained as compatibility adapters. The final validation record includes a documented waiver for destructive host-side reruns blocked by the platform tool safety layer: `docs/validation/v0.3-p1-control-plane.md`.
-
-The `v0.4.0` line starts the lock-aware automation foundation. The UID 0 daemon now exposes typed lock/display readiness, distinguishes headless execution from interactive UI readiness, and persists deferred UI jobs in its SQLite control-plane store. The first deferred verb is `device.automation.queue-app-launch`: when the phone is locked or the display is blanked the job remains pending, and the daemon executes it only after the UI becomes available. Device passcode bypass is explicitly out of policy. See `docs/phases/p4-lock-aware-automation.md`.
-
-The `v0.5.0` line adds the Provider Plane. Capabilities are now bound by the daemon to implementation providers such as Dopamine/Procursus, TrollStore/Sileo, Darwin, Frida/ElleKit, SpringBoard, ZXTouch, and TCC. `GET /v1/providers/catalog` is the implementation truth source; Action receipts/audit identify `providerId`; and `POST /v1/package/plan` resolves DEB and IPA/TIPA formats without exposing raw shell or arbitrary executable control. The iOS UI includes a Providers screen with readiness and package routing previews.
-
-The `v0.6.0` line adds the typed Package Controller. Mac clients and the iOS owner UI can stage `.deb`, `.ipa`, and `.tipa` files into a RootTools-owned store using bounded chunks, SHA-256 verification, and package-identity inspection. Installation is an R2 owner-confirmed semantic action: DEB is routed only to the fixed Procursus `dpkg` adapter and verified with `dpkg-query`; IPA/TIPA is routed only to the pinned TrollStore helper contract and verified through the installed bundle record. Callers cannot provide package filesystem paths, executables, or argv. RootTools self-update remains a separate updater concern because replacing the currently serving daemon can interrupt its own receipt lifecycle.
-
-The `v0.7.0` line completes the first managed package lifecycle. A newer managed install retires the previous verified artifact instead of deleting it; retained artifacts can be rolled back through an R2 owner-confirmed provider action. Managed DEB and TrollStore apps can be uninstalled with post-condition verification while their staged artifact remains available for reinstall. Package lifecycle events are available from `/v1/packages/history`, the Mac client exposes `package-history`, `package-uninstall`, and `package-rollback`, and the iOS Packages screen surfaces the same operations. Uninstall is intentionally limited to packages installed through RootTools rather than becoming a generic device-wide removal primitive.
-
-The `v0.8.0` line adds the independent RootTools self-updater. `roottools-execd` only persists the R2 owner-confirmed update request and returns its normal ActionReceipt; after the connection closes, a separate `roottools-updater` process validates the staged `com.arthur.roottools` DEB, extracts only the allowlisted data payload, pre-signs candidate binaries, atomically swaps the RootTools App/daemon/updater/plists, and health-checks the new daemon. If the expected daemon version does not come online, the helper restores the previous sibling backups and restarts the old daemon. Generic package install/uninstall paths explicitly reject RootTools itself.
-
-The `v0.9.0` line adds semantic runtime observation for Frida and ElleKit without turning instrumentation into a caller-facing execution surface. Frida observation reports provider/port readiness, the fixed `frida-server` process PID/UID, candidate server path, and installed package/version facts while explicitly reporting that script execution and arbitrary attach are not exposed. ElleKit observation reports the fixed rootless library/loader/injector/pspawn/safe-mode/TweakInject component facts and installed package/version while raw hook/injection APIs remain unavailable. Mac clients expose `frida-status` and `ellekit-status`, and the Providers screen shows the same runtime facts.
-
-The `v0.10.0` line starts the product/runtime convergence: RootTools now boots into the stable `Overview / Device / Tasks / Agents / Settings` shell, and `POST /v1/commands/submit` is the canonical typed command ingress while `/v1/action` remains a compatibility adapter. The next increments deepen principal identity/grants and attach AiBox/Network adapters to this gateway rather than adding transport-specific executors.
-
-The `v0.14.0` line adds semantic UI automation foundations. Callers use typed `device.ui.observe`, `device.ui.tap`, `device.ui.type`, and `device.ui.swipe`; they never see the ZXTouch wire protocol. Input actions become durable lock-aware tasks, re-check caller authority immediately before execution, and do not blindly retry indeterminate touch/text effects.
-
-The `v0.15.0` line formalizes RootTools permissions into hard policy, Owner policy mode, Principal grants, R2 approval and runtime conditions. Restricted keeps observation plus the policy recovery switch, Standard keeps explicit R2 approval, and Developer enables the full compiled non-R3 Owner surface with local Owner R2 auto-approval. Named principals never inherit Developer Mode.
-
-The `v0.16.0` line adds a structured performance/resource surface: uptime, load average, VM memory distribution, free storage, daemon resident memory, process count, active device tasks and Provider readiness. The Device tab exposes the same snapshot without falling back to shell parsing.
-
-The `v0.17.0` line turns Applications and Processes into structured management surfaces. App inventory/inspect now includes display name, version, build, source and bundle path; process inspect adds footprint/resident memory, CPU time, disk I/O, page-ins and wakeups through Darwin `proc_pid_rusage` when available. The Device tab uses product lists/details rather than raw dumps.
-
-The `v0.18.0` line adds a read-only installed-package inventory backed by the rootless Procursus `dpkg` database. `/v1/packages/installed`, the Mac `package-installed` command, and the Packages product screen expose installed package identity, version, architecture, source/status, section, size and essential-package metadata with search/filter UX. This does not widen mutation authority: device-wide installed packages remain observation-only, while uninstall/rollback continue to apply only to RootTools-managed package records.
-
-The `v0.19.0` line adds Remote Worker Mode for long-running device automation. The UID 0 daemon owns a bounded R2 policy for idle-display assertion, low-brightness target, battery/temperature telemetry and thermal gating. UI tasks pause when the battery is too warm or thermal telemetry is unavailable; RootTools never bypasses the passcode. Charging mutation remains fail-closed unless a reversible device-specific charge-control path is explicitly verified.
-
-The `v0.20.0` line turns the declared RootTools filesystem scopes into a product-level Files Manager. Nested paths are resolved relative to fixed `mobile`/`bootstrap` roots with per-segment validation and `openat`/`O_NOFOLLOW` traversal. The app can browse directories, inspect file metadata, create bounded text files and read/edit bounded UTF-8-oriented text content without exposing an arbitrary root path or following symlinks.
-
-The `v0.21.0` line closes the one-time physical v0.9 bootstrap gap on Dopamine. Host migration tooling verifies the staged RootTools DEB by SHA-256, preserves the typed Owner R2 self-update request, installs only the verified candidate updater needed to cross the old PATH/domain boundary, and retains the normal fixed allowlist, daemon health check and rollback protocol. Rootless launchd operations now target the foreground-user domain. The reference iOS 16 device successfully reached a healthy UID 0 v0.21 daemon.
-
-Host deployment tooling no longer requires libimobiledevice. When `iproxy`, `idevice_id`, or `ideviceinfo` are unavailable, the scripts use pymobiledevice3's usbmux/lockdown APIs directly for discovery, port forwarding, and device metadata. If host `ldid` is missing, the jailbreak install path signs the final App and daemon with the bootstrap's device-side `ldid` before launch.
-
-## Build and install
-
-```bash
-bash Scripts/install-jailbreak.sh
+```text
+Owner UI / trusted Host / future Skill
+                 │
+                 ▼
+          Command Gateway
+                 │
+      identity + grants + policy
+                 │
+                 ▼
+          Durable Task Runtime
+                 │
+                 ▼
+        fixed semantic Provider
+                 │
+                 ▼
+       post-condition + audit
 ```
 
-If the host environment cannot perform privileged `/var/jb` deployment, build a rootless `.deb` for explicit owner installation in Sileo/Filza:
+The foreground app runs as the normal mobile user. Privileged work is owned by `roottools-execd`, a persistent UID 0 daemon. Remote caller identity is independent from transport.
+
+Key documents:
+
+- [Product definition](docs/product/product-definition.md)
+- [Current engineering state](docs/handoff/CURRENT_STATE.md)
+- [Permission model](docs/architecture/permission-model.md)
+- [Command Gateway](docs/architecture/command-gateway.md)
+- [Task Runtime](docs/architecture/task-runtime.md)
+- [Self-Updater](docs/architecture/self-updater.md)
+- [Remote Access](docs/architecture/remote-access.md)
+- [Release process](docs/release-process.md)
+
+## Releases and installation
+
+Installable builds are published on the repository's **Releases** page. Release assets include the rootless `.deb`, `SHA256SUMS`, and `INSTALL.md`.
+
+For a Dopamine/rootless device, the normal installation flow is:
+
+1. Download the latest `roottools_<version>_iphoneos-arm64.deb` from Releases.
+2. Verify the SHA-256 checksum if possible.
+3. Install the DEB with a compatible rootless package manager such as Sileo, or with `dpkg` from an already trusted jailbreak shell.
+4. Open **Root Tools** and verify that the daemon status is online and UID 0.
+
+See [INSTALL.md](INSTALL.md) for the complete procedure and recovery notes.
+
+## Remote Access model
+
+Remote Access is intentionally **Owner initiated**. The daemon does not expose a privileged listener on ordinary Wi-Fi/cellular interfaces or `0.0.0.0`.
+
+When the Owner enables a Remote Session in the app:
+
+- the listener is bound only to a detected Tailscale IPv4 address (`100.64.0.0/10`);
+- one active Named `host` Principal is selected;
+- the Owner token and legacy Agent token are rejected on the remote listener;
+- the Host receives only its explicitly granted R0/R1 capabilities;
+- the session automatically expires and can be stopped or invalidated by revoking the Principal;
+- UI work still waits for an unlocked visible device.
+
+This provides a controlled way to hand the device to a remote automation host without publishing a root service to the public internet.
+
+## Local development
+
+Requirements:
+
+- macOS with Xcode and iPhoneOS SDK;
+- `clang`, Swift toolchain and `xcodebuild`;
+- `xcodegen` for project regeneration;
+- optional `libimobiledevice` tools or `pymobiledevice3` for USB transport;
+- a test device is required for physical jailbreak qualification.
+
+Run the source contract suite:
+
+```bash
+bash Scripts/test.sh
+```
+
+Build the Release app, daemon and updater:
 
 ```bash
 bash Scripts/build.sh
+```
+
+Build a rootless DEB:
+
+```bash
 python3 Scripts/package-rootless-deb.py
 ```
 
-See `docs/deployment/rootless-deb.md` for the fixed package allowlist and post-install behavior.
+Local credentials generated by build/test tooling (`.roottools-token` and `.roottools-agent-token`) are ignored by Git and must never be committed.
 
-Target layout on a rootless Dopamine device:
+## Release philosophy
 
-- App: `/var/jb/Applications/RootTools.app`
-- Daemon: `/var/jb/usr/local/bin/roottools-execd`
-- launchd: `/var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist`
-- API: `127.0.0.1:45821`, authenticated token generated locally at build time
+Full iOS Release builds run on the maintainer Mac instead of GitHub-hosted macOS runners. This keeps the build environment close to the physical-device qualification environment and avoids consuming hosted Actions macOS minutes.
 
+The one-command release path is:
+
+```bash
+Scripts/release-local.sh 0.23.0-1
+```
+
+It runs tests, builds locally, packages the DEB, generates checksums, tags the exact commit and uploads the resulting artifacts to GitHub Releases.
+
+GitHub Actions is manual-only and limited to lightweight repository hygiene checks.
+
+## Security
+
+RootTools is privileged software. Review [SECURITY.md](SECURITY.md) before exposing any transport or adding capabilities. In particular:
+
+- R3 and `device.raw-shell` remain hard-disabled;
+- Named Principals start with zero grants;
+- persistent grants are restricted to compiled R0/R1 capability IDs;
+- Remote Access never authenticates with the Owner token;
+- filesystem operations are scope-based rather than arbitrary absolute paths;
+- update payloads are identity checked and allowlisted before switching.
+
+## Contributing
+
+See [CONTRIBUTING.md](CONTRIBUTING.md). Changes to the privileged surface should include tests, capability/risk classification, Provider ownership, post-condition semantics and documentation.
+
+## Project status
+
+The current stable source line is **v0.22**. Physical-device qualification is tracked separately from source/build validation; see `docs/handoff/CURRENT_STATE.md` and `docs/validation/` for the exact boundary.
