@@ -1,32 +1,26 @@
-name: RootTools Release
+name: RootTools Release Metadata
+
+# Release artifacts are intentionally built on the maintainer machine.
+# GitHub Actions only validates release metadata and creates a release when
+# artifacts are explicitly attached. This avoids consuming macOS runner
+# minutes for every Swift/Xcode build.
 
 on:
-  push:
-    tags:
-      - 'v*'
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: Release tag that already has local artifacts uploaded
+        required: true
+        type: string
 
 permissions:
   contents: write
 
 jobs:
-  release:
-    runs-on: macos-latest
+  verify-release-input:
+    runs-on: ubuntu-latest
     steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Build and package
+      - name: Explain local release flow
         run: |
-          bash Scripts/build.sh
-          python3 Scripts/package-rootless-deb.py
-
-      - name: Generate checksum
-        run: |
-          sha256sum build/packages/*.deb > SHA256SUMS
-
-      - name: Create GitHub Release
-        uses: softprops/action-gh-release@v2
-        with:
-          files: |
-            build/packages/*.deb
-            SHA256SUMS
+          echo "Build locally with Scripts/release-local.sh"
+          echo "Upload generated artifacts to this release tag"
