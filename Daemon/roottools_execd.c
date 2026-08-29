@@ -40,7 +40,7 @@
 #include "update_controller.h"
 
 #define PORT 45821
-#define VERSION "0.22.0"
+#define VERSION "__ROOTTOOLS_VERSION__"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"

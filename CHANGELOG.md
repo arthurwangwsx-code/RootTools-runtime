@@ -6,11 +6,13 @@
 
 - Local Owner and Agent credentials are created and normalized with owner-only (`0600`) permissions.
 - The local release workflow rejects non-canonical origins, repositories and upstream branches.
+- Package, daemon, App and physical-verifier versions are derived from the repository `VERSION` file.
 
 ### Security
 
 - Credential loading rejects symbolic links and malformed token contents.
 - Repository boundaries now explicitly separate the iOS Runtime, Android toolbox and legacy migration checkout.
+- Packaging rejects stale build stamps, App-version drift and caller-supplied versions that do not match `VERSION`.
 
 ## 0.22.0-3
 

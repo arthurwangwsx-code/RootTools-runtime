@@ -3,11 +3,14 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/Scripts/credential-files.sh"
+source "$ROOT/Scripts/version.sh"
 
 TOKEN_FILE="$ROOT/.roottools-token"
 AGENT_TOKEN_FILE="$ROOT/.roottools-agent-token"
 TOKEN="$(roottools_read_or_create_token "$TOKEN_FILE" "Owner token")"
 AGENT_TOKEN="$(roottools_read_or_create_token "$AGENT_TOKEN_FILE" "Agent token")"
+PACKAGE_VERSION="$(roottools_package_version "$ROOT/VERSION")"
+DAEMON_VERSION="$(roottools_daemon_version "$PACKAGE_VERSION")"
 
 mkdir -p build/generated build/daemon build/obj/ios Generated
 
@@ -56,8 +59,11 @@ enum BuildToken {
     static let value = "$TOKEN"
 }
 EOF
+printf '%s\n' "$PACKAGE_VERSION" | write_if_changed build/generated/package-version
+printf '%s\n' "$DAEMON_VERSION" | write_if_changed build/generated/daemon-version
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     -e "s/__ROOTTOOLS_AGENT_TOKEN__/$AGENT_TOKEN/g" \
+    -e "s/__ROOTTOOLS_VERSION__/$DAEMON_VERSION/g" \
     Daemon/roottools_execd.c > build/generated/roottools_execd.c.tmp
 if [[ ! -f build/generated/roottools_execd.c ]] || ! cmp -s build/generated/roottools_execd.c.tmp build/generated/roottools_execd.c; then
   mv build/generated/roottools_execd.c.tmp build/generated/roottools_execd.c
@@ -168,6 +174,7 @@ sign_macho build/daemon/roottools-updater
 # reaches the compiler.
 xcodebuild -project RootTools.xcodeproj -scheme RootTools -configuration Release -sdk iphoneos \
   -destination 'generic/platform=iOS' -derivedDataPath build/DerivedData \
+  MARKETING_VERSION="$DAEMON_VERSION" CURRENT_PROJECT_VERSION="${PACKAGE_VERSION##*-}" \
   CODE_SIGNING_ALLOWED=NO CODE_SIGNING_REQUIRED=NO build
 
 APP="build/DerivedData/Build/Products/Release-iphoneos/RootTools.app"

@@ -34,6 +34,18 @@ class VerificationFailure(RuntimeError):
     pass
 
 
+def load_expected_daemon_version() -> str:
+    package_version = (ROOT / "VERSION").read_text().strip()
+    core, separator, revision = package_version.rpartition("-")
+    components = core.split(".")
+    if not separator or not revision.isdigit() or len(components) != 3 or not all(item.isdigit() for item in components):
+        raise VerificationFailure(f"invalid RootTools VERSION: {package_version}")
+    return core
+
+
+DEFAULT_EXPECTED_DAEMON_VERSION = load_expected_daemon_version()
+
+
 def require(condition: bool, message: str) -> None:
     if not condition:
         raise VerificationFailure(message)
@@ -112,9 +124,13 @@ def run_regression(
     port: int,
     udid: str,
     full: bool,
+    expected_daemon_version: str,
 ) -> None:
     status = client.status()
-    require(status.get("daemonVersion") == "0.22.0", f"expected daemon 0.22.0, got {status}")
+    require(
+        status.get("daemonVersion") == expected_daemon_version,
+        f"expected daemon {expected_daemon_version}, got {status}",
+    )
     require(status.get("uid") == 0, f"daemon must be UID 0: {status}")
     require(status.get("jailbreakRootless") is True, f"rootless bootstrap is unavailable: {status}")
     step("daemon identity", f"v{status['daemonVersion']} uid={status['uid']}")
@@ -355,7 +371,10 @@ def run_regression(
     step("UI / daemon isolation", f"terminated UI pid={ui_pid} uid={ui_uid}")
 
     still_alive = client.status()
-    require(still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == "0.22.0", "daemon died with UI")
+    require(
+        still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == expected_daemon_version,
+        "daemon died with UI",
+    )
     step("daemon survives UI exit", "Device Service still responds")
 
     legacy = client.request(
@@ -379,6 +398,7 @@ def main() -> int:
     parser.add_argument("--udid", default=os.environ.get("ROOTTOOLS_UDID"))
     parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN)
     parser.add_argument("--admin-token-file", type=Path, default=DEFAULT_ADMIN_TOKEN)
+    parser.add_argument("--expected-daemon-version", default=DEFAULT_EXPECTED_DAEMON_VERSION)
     parser.add_argument("--install", action="store_true", help="Build and install RootTools before verification")
     parser.add_argument("--full", action="store_true", help="Run safe mutation/post-condition tests")
     args = parser.parse_args()
@@ -404,7 +424,7 @@ def main() -> int:
         with device_proxy(udid) as port:
             client = DeviceServiceClient(port, token, caller="physical-verifier")
             admin_client = DeviceServiceClient(port, admin_token, caller="physical-owner-verifier")
-            run_regression(client, admin_client, port, udid, args.full)
+            run_regression(client, admin_client, port, udid, args.full, args.expected_daemon_version)
         print("RootTools physical-device verification: PASS")
         return 0
     except (DeviceServiceError, VerificationFailure, subprocess.CalledProcessError, OSError) as error:

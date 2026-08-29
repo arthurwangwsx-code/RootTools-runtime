@@ -30,6 +30,11 @@ guide. Before any build or push, it also verifies that `origin` is
 `arthurwangwsx-code/RootTools-runtime` and that local `main` tracks
 `origin/main`; the legacy mixed checkout is not a release source.
 
+`VERSION` is the single release-version source in Debian form `X.Y.Z-N`.
+The build derives daemon/App version `X.Y.Z` and App build `N` from it. Packaging
+rejects a caller-supplied mismatch, stale build-version stamps, or an App plist
+whose version does not match the candidate package.
+
 When the exact artifact was already built and validated locally, publishing
 can skip rebuilding:
 

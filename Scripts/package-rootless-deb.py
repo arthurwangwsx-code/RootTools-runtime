@@ -5,6 +5,7 @@ import argparse
 import io
 import os
 from pathlib import Path, PurePosixPath
+import plistlib
 import stat
 import tarfile
 import time
@@ -16,6 +17,63 @@ DEFAULT_DAEMON = ROOT / "build/daemon/roottools-execd"
 DEFAULT_UPDATER = ROOT / "build/daemon/roottools-updater"
 DEFAULT_PLIST = ROOT / "Daemon/com.arthur.roottools.execd.plist"
 DEFAULT_UPDATER_PLIST = ROOT / "Daemon/com.arthur.roottools.updater.plist"
+VERSION_FILE = ROOT / "VERSION"
+
+
+def load_version() -> str:
+    version = VERSION_FILE.read_text().strip()
+    parts = version.rsplit("-", 1)
+    if len(parts) != 2 or not parts[1].isdigit():
+        raise SystemExit(f"invalid RootTools package version in {VERSION_FILE}: {version}")
+    core = parts[0].split(".")
+    if len(core) != 3 or not all(part.isdigit() for part in core):
+        raise SystemExit(f"invalid RootTools package version in {VERSION_FILE}: {version}")
+    return version
+
+
+DEFAULT_VERSION = load_version()
+
+
+def daemon_version_from_package(package_version: str) -> str:
+    core, separator, revision = package_version.rpartition("-")
+    if not separator or not revision.isdigit():
+        raise SystemExit(f"invalid RootTools package version: {package_version}")
+    components = core.split(".")
+    if len(components) != 3 or not all(component.isdigit() for component in components):
+        raise SystemExit(f"invalid RootTools package version: {package_version}")
+    return core
+
+
+def validate_version_inputs(app: Path, daemon: Path, version: str) -> None:
+    if version != DEFAULT_VERSION:
+        raise SystemExit(f"package version must match {VERSION_FILE}: expected {DEFAULT_VERSION}, got {version}")
+
+    daemon_version = daemon_version_from_package(version)
+    package_stamp = ROOT / "build/generated/package-version"
+    daemon_stamp = ROOT / "build/generated/daemon-version"
+    for stamp, expected in ((package_stamp, version), (daemon_stamp, daemon_version)):
+        if not stamp.is_file() or stamp.read_text().strip() != expected:
+            raise SystemExit(f"stale or missing build version stamp: {stamp} (expected {expected})")
+
+    generated_daemon = ROOT / "build/generated/roottools_execd.c"
+    expected_define = f'#define VERSION "{daemon_version}"'
+    if not generated_daemon.is_file() or expected_define not in generated_daemon.read_text():
+        raise SystemExit(f"generated daemon version mismatch: expected {expected_define}")
+    if daemon.stat().st_mtime < generated_daemon.stat().st_mtime:
+        raise SystemExit(f"daemon binary is older than generated version source: {daemon}")
+
+    info_plist = app / "Info.plist"
+    if not info_plist.is_file():
+        raise SystemExit(f"missing build input: {info_plist}")
+    with info_plist.open("rb") as stream:
+        info = plistlib.load(stream)
+    if info.get("CFBundleShortVersionString") != daemon_version:
+        raise SystemExit(
+            f"app version mismatch: expected {daemon_version}, got {info.get('CFBundleShortVersionString')}"
+        )
+    expected_build = version.rsplit("-", 1)[1]
+    if str(info.get("CFBundleVersion")) != expected_build:
+        raise SystemExit(f"app build mismatch: expected {expected_build}, got {info.get('CFBundleVersion')}")
 
 
 def tar_bytes(files: list[tuple[Path, str, int]], extra_text: dict[str, tuple[str, int]] | None = None) -> bytes:
@@ -100,6 +158,7 @@ def build_package(app: Path, daemon: Path, updater: Path, plist: Path, updater_p
     for path in (app, daemon, updater, plist, updater_plist):
         if not path.exists():
             raise SystemExit(f"missing build input: {path}")
+    validate_version_inputs(app, daemon, version)
 
     control = f"""Package: com.arthur.roottools
 Name: RootTools
@@ -197,8 +256,8 @@ def main() -> int:
     parser.add_argument("--updater", type=Path, default=DEFAULT_UPDATER)
     parser.add_argument("--plist", type=Path, default=DEFAULT_PLIST)
     parser.add_argument("--updater-plist", type=Path, default=DEFAULT_UPDATER_PLIST)
-    parser.add_argument("--version", default="0.22.0-3")
-    parser.add_argument("--output", type=Path, default=ROOT / "build/packages/roottools_0.22.0-3_iphoneos-arm64.deb")
+    parser.add_argument("--version", default=DEFAULT_VERSION)
+    parser.add_argument("--output", type=Path, default=ROOT / f"build/packages/roottools_{DEFAULT_VERSION}_iphoneos-arm64.deb")
     args = parser.parse_args()
     build_package(args.app, args.daemon, args.updater, args.plist, args.updater_plist, args.output, args.version)
     print(args.output)

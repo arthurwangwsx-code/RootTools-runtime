@@ -3,6 +3,7 @@ set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/Scripts/credential-files.sh"
+source "$ROOT/Scripts/version.sh"
 
 mkdir -p build/tests
 
@@ -10,9 +11,12 @@ TOKEN_FILE="$ROOT/.roottools-token"
 AGENT_TOKEN_FILE="$ROOT/.roottools-agent-token"
 TOKEN="$(roottools_read_or_create_token "$TOKEN_FILE" "Owner token")"
 AGENT_TOKEN="$(roottools_read_or_create_token "$AGENT_TOKEN_FILE" "Agent token")"
+PACKAGE_VERSION="$(roottools_package_version "$ROOT/VERSION")"
+DAEMON_VERSION="$(roottools_daemon_version "$PACKAGE_VERSION")"
 
 bash Tests/credential_files_test.sh
 bash Tests/repository_boundary_test.sh
+bash Tests/version_consistency_test.sh
 
 clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   Tests/control_plane_test.c Daemon/control_plane.c \
@@ -63,6 +67,7 @@ assert catalog["invariants"] == {"r3Exposed": False, "rawPrivilegedShellExposed"
 
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     -e "s/__ROOTTOOLS_AGENT_TOKEN__/$AGENT_TOKEN/g" \
+    -e "s/__ROOTTOOLS_VERSION__/$DAEMON_VERSION/g" \
     Daemon/roottools_execd.c > build/tests/roottools_execd_mac.c
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     Daemon/roottools_updater.c > build/tests/roottools_updater_mac.c

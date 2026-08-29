@@ -40,6 +40,13 @@ fi
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/Scripts/repository-boundary.sh"
+source "$ROOT/Scripts/version.sh"
+
+CANONICAL_VERSION="$(roottools_package_version "$ROOT/VERSION")"
+if [[ "$VERSION" != "$CANONICAL_VERSION" ]]; then
+  echo "release version must match VERSION ($CANONICAL_VERSION), got: $VERSION" >&2
+  exit 64
+fi
 
 TAG="v$VERSION"
 DEB="build/packages/roottools_${VERSION}_iphoneos-arm64.deb"

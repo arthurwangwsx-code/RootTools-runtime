@@ -125,6 +125,7 @@ Scripts/release-local.sh 0.23.0-1
 ```
 
 It runs tests, builds locally, packages the DEB, generates checksums, tags the exact commit and uploads the resulting artifacts to GitHub Releases.
+The requested release version must match the repository [`VERSION`](VERSION) file; the same source drives the daemon-reported version, App version, package metadata and physical-device verifier.
 
 GitHub Actions is manual-only and limited to lightweight repository hygiene checks.
 
