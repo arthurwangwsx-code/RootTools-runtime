@@ -7,6 +7,7 @@
 - Local Owner and Agent credentials are created and normalized with owner-only (`0600`) permissions.
 - The local release workflow rejects non-canonical origins, repositories and upstream branches.
 - Package, daemon, App and physical-verifier versions are derived from the repository `VERSION` file.
+- DEB tar/gzip/ar metadata uses `SOURCE_DATE_EPOCH` (defaulting to the Git commit time) for reproducible release artifacts.
 - A three-phase physical qualification tool now proves least-privilege Remote Access over USB preparation, enforced off-USB execution, and stop/expiry/revoke cleanup.
 
 ### Security
@@ -14,6 +15,7 @@
 - Credential loading rejects symbolic links and malformed token contents.
 - Repository boundaries now explicitly separate the iOS Runtime, Android toolbox and legacy migration checkout.
 - Packaging rejects stale build stamps, App-version drift and caller-supplied versions that do not match `VERSION`.
+- Repeated packaging of the same committed inputs is byte-for-byte stable.
 
 ## 0.22.0-3
 

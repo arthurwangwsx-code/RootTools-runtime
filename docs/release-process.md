@@ -35,6 +35,11 @@ The build derives daemon/App version `X.Y.Z` and App build `N` from it. Packagin
 rejects a caller-supplied mismatch, stale build-version stamps, or an App plist
 whose version does not match the candidate package.
 
+DEB archive metadata uses `SOURCE_DATE_EPOCH`, defaulting to the timestamp of
+the current Git commit. Repackaging the same committed inputs therefore
+produces the same bytes and checksum. A caller may set `SOURCE_DATE_EPOCH`
+explicitly for an equivalent controlled build environment.
+
 When the exact artifact was already built and validated locally, publishing
 can skip rebuilding:
 

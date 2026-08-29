@@ -26,8 +26,20 @@ def main() -> int:
                     "./var/jb/Applications/RootTools.app/_CodeSignature/CodeResources",
                     0o644,
                 )
-            ]
+            ],
+            source_date_epoch=1_700_000_000,
         )
+        repeated_payload = MODULE.tar_bytes(
+            [
+                (
+                    source,
+                    "./var/jb/Applications/RootTools.app/_CodeSignature/CodeResources",
+                    0o644,
+                )
+            ],
+            source_date_epoch=1_700_000_000,
+        )
+        assert payload == repeated_payload
         with tarfile.open(fileobj=io.BytesIO(payload), mode="r:gz") as archive:
             members = {member.name: member for member in archive.getmembers()}
         required_directories = {
@@ -41,6 +53,10 @@ def main() -> int:
             assert directory in members, directory
             assert members[directory].isdir(), directory
         assert "./var/jb/Applications/RootTools.app/_CodeSignature/CodeResources" in members
+
+        first_member = MODULE.ar_member("data.tar.gz", payload, 1_700_000_000)
+        second_member = MODULE.ar_member("data.tar.gz", payload, 1_700_000_000)
+        assert first_member == second_member
 
     print("package_builder_test: PASS")
     return 0

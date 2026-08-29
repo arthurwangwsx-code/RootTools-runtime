@@ -2,13 +2,14 @@
 from __future__ import annotations
 
 import argparse
+import gzip
 import io
 import os
 from pathlib import Path, PurePosixPath
 import plistlib
 import stat
+import subprocess
 import tarfile
-import time
 
 
 ROOT = Path(__file__).resolve().parent.parent
@@ -32,6 +33,27 @@ def load_version() -> str:
 
 
 DEFAULT_VERSION = load_version()
+
+
+def load_source_date_epoch() -> int:
+    configured = os.environ.get("SOURCE_DATE_EPOCH")
+    if configured is not None:
+        if not configured.isdigit():
+            raise SystemExit("SOURCE_DATE_EPOCH must be a non-negative integer")
+        return int(configured)
+    try:
+        value = subprocess.check_output(
+            ["git", "-C", str(ROOT), "show", "-s", "--format=%ct", "HEAD"],
+            text=True,
+        ).strip()
+    except (OSError, subprocess.CalledProcessError) as error:
+        raise SystemExit("unable to derive SOURCE_DATE_EPOCH from Git HEAD") from error
+    if not value.isdigit():
+        raise SystemExit(f"invalid Git commit timestamp: {value}")
+    return int(value)
+
+
+DEFAULT_SOURCE_DATE_EPOCH = load_source_date_epoch()
 
 
 def daemon_version_from_package(package_version: str) -> str:
@@ -76,61 +98,67 @@ def validate_version_inputs(app: Path, daemon: Path, version: str) -> None:
         raise SystemExit(f"app build mismatch: expected {expected_build}, got {info.get('CFBundleVersion')}")
 
 
-def tar_bytes(files: list[tuple[Path, str, int]], extra_text: dict[str, tuple[str, int]] | None = None) -> bytes:
+def tar_bytes(
+    files: list[tuple[Path, str, int]],
+    extra_text: dict[str, tuple[str, int]] | None = None,
+    source_date_epoch: int = DEFAULT_SOURCE_DATE_EPOCH,
+) -> bytes:
     buffer = io.BytesIO()
-    with tarfile.open(fileobj=buffer, mode="w:gz", format=tarfile.GNU_FORMAT) as archive:
-        added_directories: set[str] = set()
+    with gzip.GzipFile(fileobj=buffer, mode="wb", mtime=source_date_epoch) as compressed:
+        with tarfile.open(fileobj=compressed, mode="w", format=tarfile.GNU_FORMAT) as archive:
+            added_directories: set[str] = set()
 
-        def add_parent_directories(destination: str) -> None:
-            normalized = destination.removeprefix("./")
-            parent_chain = list(PurePosixPath(normalized).parents)
-            for parent in reversed(parent_chain):
-                name = parent.as_posix()
-                if name in {".", "/"} or name in added_directories:
-                    continue
-                info = tarfile.TarInfo(f"./{name}")
-                info.type = tarfile.DIRTYPE
-                info.mode = 0o755
-                info.uid = 0
-                info.gid = 0
-                info.uname = "root"
-                info.gname = "wheel"
-                info.mtime = int(time.time())
-                archive.addfile(info)
-                added_directories.add(name)
+            def add_parent_directories(destination: str) -> None:
+                normalized = destination.removeprefix("./")
+                parent_chain = list(PurePosixPath(normalized).parents)
+                for parent in reversed(parent_chain):
+                    name = parent.as_posix()
+                    if name in {".", "/"} or name in added_directories:
+                        continue
+                    info = tarfile.TarInfo(f"./{name}")
+                    info.type = tarfile.DIRTYPE
+                    info.mode = 0o755
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = "root"
+                    info.gname = "wheel"
+                    info.mtime = source_date_epoch
+                    archive.addfile(info)
+                    added_directories.add(name)
 
-        for source, destination, mode in files:
-            add_parent_directories(destination)
-            info = archive.gettarinfo(str(source), arcname=destination)
-            info.uid = 0
-            info.gid = 0
-            info.uname = "root"
-            info.gname = "wheel"
-            info.mode = mode
-            with source.open("rb") as handle:
-                archive.addfile(info, handle)
-        if extra_text:
-            for destination, (text, mode) in extra_text.items():
+            for source, destination, mode in files:
                 add_parent_directories(destination)
-                payload = text.encode()
-                info = tarfile.TarInfo(destination)
-                info.size = len(payload)
-                info.mode = mode
+                info = archive.gettarinfo(str(source), arcname=destination)
                 info.uid = 0
                 info.gid = 0
                 info.uname = "root"
                 info.gname = "wheel"
-                info.mtime = int(time.time())
-                archive.addfile(info, io.BytesIO(payload))
+                info.mode = mode
+                info.mtime = source_date_epoch
+                with source.open("rb") as handle:
+                    archive.addfile(info, handle)
+            if extra_text:
+                for destination, (text, mode) in extra_text.items():
+                    add_parent_directories(destination)
+                    payload = text.encode()
+                    info = tarfile.TarInfo(destination)
+                    info.size = len(payload)
+                    info.mode = mode
+                    info.uid = 0
+                    info.gid = 0
+                    info.uname = "root"
+                    info.gname = "wheel"
+                    info.mtime = source_date_epoch
+                    archive.addfile(info, io.BytesIO(payload))
     return buffer.getvalue()
 
 
-def ar_member(name: str, payload: bytes) -> bytes:
+def ar_member(name: str, payload: bytes, source_date_epoch: int = DEFAULT_SOURCE_DATE_EPOCH) -> bytes:
     if len(name) > 15:
         raise ValueError(f"ar member name too long: {name}")
     header = (
         f"{name + '/':<16}"
-        f"{int(time.time()):<12}"
+        f"{source_date_epoch:<12}"
         f"{0:<6}"
         f"{0:<6}"
         f"{0o100644:<8o}"
@@ -154,7 +182,16 @@ def app_files(app: Path) -> list[tuple[Path, str, int]]:
     return result
 
 
-def build_package(app: Path, daemon: Path, updater: Path, plist: Path, updater_plist: Path, output: Path, version: str) -> None:
+def build_package(
+    app: Path,
+    daemon: Path,
+    updater: Path,
+    plist: Path,
+    updater_plist: Path,
+    output: Path,
+    version: str,
+    source_date_epoch: int = DEFAULT_SOURCE_DATE_EPOCH,
+) -> None:
     for path in (app, daemon, updater, plist, updater_plist):
         if not path.exists():
             raise SystemExit(f"missing build input: {path}")
@@ -227,6 +264,7 @@ exit 0
             "./postinst": (postinst, 0o755),
             "./prerm": (prerm, 0o755),
         },
+        source_date_epoch,
     )
 
     data_files = app_files(app)
@@ -238,13 +276,13 @@ exit 0
             (updater_plist, "./var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist", 0o644),
         ]
     )
-    data_tar = tar_bytes(data_files)
+    data_tar = tar_bytes(data_files, source_date_epoch=source_date_epoch)
 
     output.parent.mkdir(parents=True, exist_ok=True)
     package = b"!<arch>\n"
-    package += ar_member("debian-binary", b"2.0\n")
-    package += ar_member("control.tar.gz", control_tar)
-    package += ar_member("data.tar.gz", data_tar)
+    package += ar_member("debian-binary", b"2.0\n", source_date_epoch)
+    package += ar_member("control.tar.gz", control_tar, source_date_epoch)
+    package += ar_member("data.tar.gz", data_tar, source_date_epoch)
     output.write_bytes(package)
     output.chmod(0o644)
 
@@ -258,8 +296,20 @@ def main() -> int:
     parser.add_argument("--updater-plist", type=Path, default=DEFAULT_UPDATER_PLIST)
     parser.add_argument("--version", default=DEFAULT_VERSION)
     parser.add_argument("--output", type=Path, default=ROOT / f"build/packages/roottools_{DEFAULT_VERSION}_iphoneos-arm64.deb")
+    parser.add_argument("--source-date-epoch", type=int, default=DEFAULT_SOURCE_DATE_EPOCH)
     args = parser.parse_args()
-    build_package(args.app, args.daemon, args.updater, args.plist, args.updater_plist, args.output, args.version)
+    if args.source_date_epoch < 0:
+        parser.error("--source-date-epoch must be non-negative")
+    build_package(
+        args.app,
+        args.daemon,
+        args.updater,
+        args.plist,
+        args.updater_plist,
+        args.output,
+        args.version,
+        args.source_date_epoch,
+    )
     print(args.output)
     return 0
 
