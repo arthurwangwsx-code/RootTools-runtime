@@ -53,6 +53,7 @@ Key documents:
 - [Task Runtime](docs/architecture/task-runtime.md)
 - [Self-Updater](docs/architecture/self-updater.md)
 - [Remote Access](docs/architecture/remote-access.md)
+- [Remote Access physical qualification](docs/validation/remote-access-physical-runbook.md)
 - [Repository maintenance boundaries](docs/maintenance/repository-boundaries.md)
 - [Release process](docs/release-process.md)
 

@@ -7,6 +7,7 @@
 - Local Owner and Agent credentials are created and normalized with owner-only (`0600`) permissions.
 - The local release workflow rejects non-canonical origins, repositories and upstream branches.
 - Package, daemon, App and physical-verifier versions are derived from the repository `VERSION` file.
+- A three-phase physical qualification tool now proves least-privilege Remote Access over USB preparation, enforced off-USB execution, and stop/expiry/revoke cleanup.
 
 ### Security
 

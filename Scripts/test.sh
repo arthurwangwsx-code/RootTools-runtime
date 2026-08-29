@@ -51,6 +51,7 @@ clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   -lsqlite3 -framework CoreFoundation -o build/tests/principal_store_test
 build/tests/principal_store_test
 python3 Tests/package_builder_test.py
+python3 Tests/remote_qualification_test.py
 build/tests/control_plane_test --catalog | python3 -c '
 import json, sys
 catalog=json.load(sys.stdin)
@@ -87,6 +88,7 @@ python3 -m py_compile \
   Scripts/usbmux_proxy.py \
   Scripts/device_service.py \
   Scripts/device_doctor.py \
+  Scripts/qualify-remote-access.py \
   Scripts/root_exec.py \
   Scripts/verify-device.py \
   Scripts/migrate-v09-updater-path.py \

@@ -280,9 +280,9 @@ Never print or commit token contents.
 
 Repository and credential maintenance hardening is source/build/package validated on the v0.23 development line. The canonical checkout now enforces owner-only token files and rejects release attempts from the historical mixed checkout. See `docs/validation/v0.23-maintenance-hardening.md`.
 
-1. install the canonical Runtime candidate on the reference device;
-2. qualify Tailscale Remote Session end-to-end with USB disconnected;
-3. verify session expiry/stop/revoke behavior and R0/R1 remote task execution physically;
+1. install the canonical Runtime candidate and run `verify-device.py --install --full` on the reference device;
+2. run the three-phase `qualify-remote-access.py` procedure in `docs/validation/remote-access-physical-runbook.md`;
+3. retain the completed, secret-free receipt evidence for session expiry/stop/revoke and off-USB R0/R1 execution;
 4. retire the frozen legacy iOS checkout only after credential migration and physical acceptance;
 5. deepen Accessibility/selector/vision UI automation;
 6. deepen Task Runtime into Workflow / Trigger / Retry / Result semantics;

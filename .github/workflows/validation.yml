@@ -22,6 +22,8 @@ jobs:
         run: |
           bash Tests/credential_files_test.sh
           bash Tests/repository_boundary_test.sh
+          bash Tests/version_consistency_test.sh
+          python3 Tests/remote_qualification_test.py
 
       - name: Explain full validation boundary
         run: |
