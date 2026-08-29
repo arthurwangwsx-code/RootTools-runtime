@@ -2,15 +2,17 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/Scripts/credential-files.sh"
 
 mkdir -p build/tests
 
 TOKEN_FILE="$ROOT/.roottools-token"
 AGENT_TOKEN_FILE="$ROOT/.roottools-agent-token"
-if [[ ! -f "$TOKEN_FILE" ]]; then openssl rand -hex 24 > "$TOKEN_FILE"; fi
-if [[ ! -f "$AGENT_TOKEN_FILE" ]]; then openssl rand -hex 24 > "$AGENT_TOKEN_FILE"; fi
-TOKEN="$(cat "$TOKEN_FILE")"
-AGENT_TOKEN="$(cat "$AGENT_TOKEN_FILE")"
+TOKEN="$(roottools_read_or_create_token "$TOKEN_FILE" "Owner token")"
+AGENT_TOKEN="$(roottools_read_or_create_token "$AGENT_TOKEN_FILE" "Agent token")"
+
+bash Tests/credential_files_test.sh
+bash Tests/repository_boundary_test.sh
 
 clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   Tests/control_plane_test.c Daemon/control_plane.c \
@@ -84,6 +86,6 @@ python3 -m py_compile \
   Scripts/verify-device.py \
   Scripts/migrate-v09-updater-path.py \
   Scripts/package-rootless-deb.py
-bash -n Scripts/build.sh Scripts/install-jailbreak.sh
+bash -n Scripts/*.sh Tests/*.sh
 
 echo "RootTools contract tests: PASS"

@@ -2,13 +2,12 @@
 set -euo pipefail
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/Scripts/credential-files.sh"
 
 TOKEN_FILE="$ROOT/.roottools-token"
-if [[ ! -f "$TOKEN_FILE" ]]; then openssl rand -hex 24 > "$TOKEN_FILE"; fi
-TOKEN="$(cat "$TOKEN_FILE")"
 AGENT_TOKEN_FILE="$ROOT/.roottools-agent-token"
-if [[ ! -f "$AGENT_TOKEN_FILE" ]]; then openssl rand -hex 24 > "$AGENT_TOKEN_FILE"; fi
-AGENT_TOKEN="$(cat "$AGENT_TOKEN_FILE")"
+TOKEN="$(roottools_read_or_create_token "$TOKEN_FILE" "Owner token")"
+AGENT_TOKEN="$(roottools_read_or_create_token "$AGENT_TOKEN_FILE" "Agent token")"
 
 mkdir -p build/generated build/daemon build/obj/ios Generated
 
@@ -174,4 +173,3 @@ xcodebuild -project RootTools.xcodeproj -scheme RootTools -configuration Release
 APP="build/DerivedData/Build/Products/Release-iphoneos/RootTools.app"
 sign_macho "$APP/RootTools"
 echo "Built app: $APP"
-

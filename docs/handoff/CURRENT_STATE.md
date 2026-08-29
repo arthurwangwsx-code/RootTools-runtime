@@ -278,11 +278,14 @@ Never print or commit token contents.
 
 ## 10. Immediate priorities
 
-1. publish and install the canonical v0.22 Runtime release on the remote reference device;
+Repository and credential maintenance hardening is source/build/package validated on the v0.23 development line. The canonical checkout now enforces owner-only token files and rejects release attempts from the historical mixed checkout. See `docs/validation/v0.23-maintenance-hardening.md`.
+
+1. install the canonical Runtime candidate on the reference device;
 2. qualify Tailscale Remote Session end-to-end with USB disconnected;
 3. verify session expiry/stop/revoke behavior and R0/R1 remote task execution physically;
-4. deepen Accessibility/selector/vision UI automation;
-5. deepen Task Runtime into Workflow / Trigger / Retry / Result semantics;
-6. continue reboot/re-jailbreak/crash-loop recovery and Production 1.0 hardening.
+4. retire the frozen legacy iOS checkout only after credential migration and physical acceptance;
+5. deepen Accessibility/selector/vision UI automation;
+6. deepen Task Runtime into Workflow / Trigger / Retry / Result semantics;
+7. continue reboot/re-jailbreak/crash-loop recovery and Production 1.0 hardening.
 
 AiBox remains deferred until these RootTools runtime and remote-operation boundaries are stable.

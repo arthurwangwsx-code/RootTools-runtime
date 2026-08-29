@@ -1,5 +1,17 @@
 # Changelog
 
+## Unreleased
+
+### Changed
+
+- Local Owner and Agent credentials are created and normalized with owner-only (`0600`) permissions.
+- The local release workflow rejects non-canonical origins, repositories and upstream branches.
+
+### Security
+
+- Credential loading rejects symbolic links and malformed token contents.
+- Repository boundaries now explicitly separate the iOS Runtime, Android toolbox and legacy migration checkout.
+
 ## 0.22.0-3
 
 ### Added

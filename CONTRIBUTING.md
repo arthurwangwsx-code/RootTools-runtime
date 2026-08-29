@@ -42,3 +42,5 @@ Keep milestones coherent and independently revertible. Do not commit local token
 ## Releases
 
 Official release artifacts are built locally with `Scripts/release-local.sh` and uploaded to GitHub Releases. Do not add hosted macOS compilation to GitHub Actions without an explicit reason.
+
+Only `arthurwangwsx-code/RootTools-runtime` is an iOS Runtime release source. The legacy `RootTools` checkout must not receive Runtime development or releases; see `docs/maintenance/repository-boundaries.md`.

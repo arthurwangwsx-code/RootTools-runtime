@@ -26,7 +26,9 @@ Scripts/release-local.sh 0.23.0-1
 The script requires a clean working tree, runs the full local validation/build,
 packages the exact Debian version, generates checksums, creates/pushes the
 annotated tag, and creates the GitHub Release with the DEB, checksum and install
-guide.
+guide. Before any build or push, it also verifies that `origin` is
+`arthurwangwsx-code/RootTools-runtime` and that local `main` tracks
+`origin/main`; the legacy mixed checkout is not a release source.
 
 When the exact artifact was already built and validated locally, publishing
 can skip rebuilding:

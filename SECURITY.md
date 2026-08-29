@@ -23,6 +23,7 @@ The following files are local credentials and are excluded from Git:
 - `.roottools-agent-token`
 
 Do not paste their contents into issues, logs, screenshots, test fixtures or documentation.
+Build and test tooling must create these files with owner-only (`0600`) permissions, reject symbolic links, and reject malformed token contents. Do not copy credentials between legacy and canonical checkouts; rotate or migrate them only as part of an explicitly verified device transition.
 
 ## Reporting a vulnerability
 

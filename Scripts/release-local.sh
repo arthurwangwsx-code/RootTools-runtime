@@ -39,13 +39,14 @@ fi
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
+source "$ROOT/Scripts/repository-boundary.sh"
 
 TAG="v$VERSION"
 DEB="build/packages/roottools_${VERSION}_iphoneos-arm64.deb"
 RELEASE_DIR="build/release/$TAG"
 CHECKSUMS="$RELEASE_DIR/SHA256SUMS"
 NOTES="$RELEASE_DIR/RELEASE_NOTES.md"
-REPO="${ROOTTOOLS_RELEASE_REPO:-$(gh repo view --json nameWithOwner --jq .nameWithOwner 2>/dev/null || true)}"
+REPO="${ROOTTOOLS_RELEASE_REPO:-$ROOTTOOLS_CANONICAL_REPO}"
 
 echo "== RootTools Runtime local release $TAG =="
 
@@ -56,13 +57,9 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 git diff --check
+roottools_require_canonical_release_checkout "$ROOT" "$REPO"
 command -v gh >/dev/null || { echo "gh CLI is required" >&2; exit 3; }
 gh auth status >/dev/null
-[[ -n "$REPO" ]] || { echo "unable to resolve GitHub repository" >&2; exit 3; }
-[[ "$(git branch --show-current)" == "main" ]] || {
-  echo "releases must be created from main" >&2
-  exit 3
-}
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   bash Scripts/test.sh
