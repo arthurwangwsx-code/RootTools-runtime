@@ -50,3 +50,20 @@ If the device has rebooted out of the jailbroken state, re-enable the jailbreak 
 ## Integrity
 
 Every official release includes `SHA256SUMS`. The checksum should match the downloaded DEB before installation.
+
+## IPA / TrollStore app recovery
+
+`RootTools_<version>.ipa` contains the Root Tools foreground app built from the
+same source, version and credential inputs as the release DEB. Install it with
+TrollStore when the app needs to be restored without replacing an already
+matching daemon.
+
+The IPA alone is not the full privileged Runtime. It does not install
+`roottools-execd`, `roottools-updater`, or either launchd plist. If Overview does
+not report the matching daemon online at UID 0, install the same release's DEB.
+Do not pass this ad-hoc/TrollStore package to `ideviceinstaller`, which expects
+a normal Apple development or distribution signature.
+
+RootTools artifacts are personalized and are stored in a maintainer-only draft
+when the source repository is public. Sign in to the authorized GitHub account
+before downloading them.

@@ -51,6 +51,7 @@ clang -std=c11 -Wall -Wextra -Werror -I Daemon \
   -lsqlite3 -framework CoreFoundation -o build/tests/principal_store_test
 build/tests/principal_store_test
 python3 Tests/package_builder_test.py
+python3 Tests/package_ipa_test.py
 python3 Tests/remote_qualification_test.py
 build/tests/control_plane_test --catalog | python3 -c '
 import json, sys
@@ -92,7 +93,8 @@ python3 -m py_compile \
   Scripts/root_exec.py \
   Scripts/verify-device.py \
   Scripts/migrate-v09-updater-path.py \
-  Scripts/package-rootless-deb.py
+  Scripts/package-rootless-deb.py \
+  Scripts/package-ipa.py
 bash -n Scripts/*.sh Tests/*.sh
 
 echo "RootTools contract tests: PASS"
