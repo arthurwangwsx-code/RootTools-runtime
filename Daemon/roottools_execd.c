@@ -41,6 +41,7 @@
 
 #define PORT 45821
 #define VERSION "__ROOTTOOLS_VERSION__"
+#define PACKAGE_VERSION "__ROOTTOOLS_PACKAGE_VERSION__"
 #define SERVICE_SCHEMA_VERSION 1
 #define ADMIN_TOKEN "__ROOTTOOLS_TOKEN__"
 #define AGENT_TOKEN "__ROOTTOOLS_AGENT_TOKEN__"
@@ -1099,9 +1100,9 @@ static char *runtime_text(void) {
 static char *diagnostics_text(void) {
     char machine[64]={0}, osbuild[64]={0}; struct utsname u; uname(&u); sysctl_string("hw.machine",machine,sizeof(machine)); sysctl_string("kern.osversion",osbuild,sizeof(osbuild));
     char *out=calloc(1,16384);
-    appendf(out,16384,"ROOT TOOLS SNAPSHOT\nuid=%d gid=%d\nmachine=%s\nosBuild=%s\nkernel=%s\ncpu=%d\nmemory=%llu\nrootFree=%llu\nvarFree=%llu\nrootless=%s\nssh=%s frida=%s zxtouch=%s\ndaemonVersion=%s\n",
+    appendf(out,16384,"ROOT TOOLS SNAPSHOT\nuid=%d gid=%d\nmachine=%s\nosBuild=%s\nkernel=%s\ncpu=%d\nmemory=%llu\nrootFree=%llu\nvarFree=%llu\nrootless=%s\nssh=%s frida=%s zxtouch=%s\ndaemonVersion=%s\npackageVersion=%s\n",
         getuid(),getgid(),machine,osbuild,u.release,sysctl_int("hw.ncpu"),sysctl_u64("hw.memsize"),free_bytes("/"),free_bytes("/var"),
-        access("/var/jb",F_OK)==0?"true":"false",port_open(22)?"ready":"off",port_open(27042)?"ready":"off",port_open(6000)?"ready":"off",VERSION);
+        access("/var/jb",F_OK)==0?"true":"false",port_open(22)?"ready":"off",port_open(27042)?"ready":"off",port_open(6000)?"ready":"off",VERSION,PACKAGE_VERSION);
     return out;
 }
 
@@ -2115,12 +2116,12 @@ static void send_hello(int fd, RTAuthRole role, const char *caller) {
     char escaped_caller[256]={0};json_escape(caller?caller:"authenticated-client",escaped_caller,sizeof(escaped_caller));
     char response[4096]={0};
     snprintf(response,sizeof(response),
-        "{\"service\":\"roottools.device-service\",\"schemaVersion\":%d,\"daemonVersion\":\"%s\","
+        "{\"service\":\"roottools.device-service\",\"schemaVersion\":%d,\"daemonVersion\":\"%s\",\"packageVersion\":\"%s\","
         "\"authenticatedRole\":\"%s\",\"authenticatedCaller\":\"%s\",\"platform\":\"ios\",\"machine\":\"%s\",\"osBuild\":\"%s\","
         "\"privilegeState\":\"%s\",\"generation\":%d,\"revision\":%llu,\"revisionAvailable\":%s,\"capabilityCount\":%zu,"
         "\"features\":{\"typedActions\":true,\"commandGateway\":true,\"namedPrincipals\":true,\"ownerPolicy\":true,\"permissionProfiles\":true,\"developerMode\":true,\"performanceSnapshot\":true,\"remoteWorkerMode\":true,\"durableIdempotency\":true,"
         "\"expectedRevision\":true,\"eventAudit\":true,\"durableTasks\":true,\"semanticUIAutomation\":true,\"runtimeAdapters\":true,\"runtimeSemanticObservation\":true,\"providerRegistry\":true,\"packageProviderPlanning\":true,\"packageController\":true,\"packageLifecycle\":true,\"selfUpdater\":true,\"packageChunkBytes\":262144,\"lockAwareAutomation\":true,\"deferredUIJobs\":true,\"tccReadOnly\":true,\"rawPrivilegedShell\":false}}",
-        SERVICE_SCHEMA_VERSION,VERSION,auth_role_name(role),escaped_caller,machine,osbuild,
+        SERVICE_SCHEMA_VERSION,VERSION,PACKAGE_VERSION,auth_role_name(role),escaped_caller,machine,osbuild,
         rootless&&getuid()==0?"jailbreak-root":"degraded",getpid(),revision,revision_available?"true":"false",rt_capability_count());
     send_response(fd,200,"application/json",response);
 }
@@ -3275,9 +3276,9 @@ static void handle(int fd, int remote_ingress) {
         int pending_jobs=task_active_count();
         char response[3072];
         snprintf(response, sizeof(response),
-            "{\"daemonVersion\":\"%s\",\"uid\":%d,\"machine\":\"%s\",\"osBuild\":\"%s\",\"kernel\":\"%s\",\"cpuCount\":%d,\"memoryBytes\":%llu,\"rootFreeBytes\":%llu,\"varFreeBytes\":%llu,\"jailbreakRootless\":%s,\"dopamineRunning\":%s,\"sshReady\":%s,\"fridaReady\":%s,\"zxTouchReady\":%s,"
+            "{\"daemonVersion\":\"%s\",\"packageVersion\":\"%s\",\"uid\":%d,\"machine\":\"%s\",\"osBuild\":\"%s\",\"kernel\":\"%s\",\"cpuCount\":%d,\"memoryBytes\":%llu,\"rootFreeBytes\":%llu,\"varFreeBytes\":%llu,\"jailbreakRootless\":%s,\"dopamineRunning\":%s,\"sshReady\":%s,\"fridaReady\":%s,\"zxTouchReady\":%s,"
             "\"lockState\":\"%s\",\"deviceLocked\":%s,\"screenState\":\"%s\",\"screenBlanked\":%s,\"headlessExecutionReady\":%s,\"uiExecutionReady\":%s,\"automationPendingCount\":%d}",
-            VERSION, getuid(), machine, osbuild, u.release, sysctl_int("hw.ncpu"), sysctl_u64("hw.memsize"), free_bytes("/"), free_bytes("/var"),
+            VERSION, PACKAGE_VERSION, getuid(), machine, osbuild, u.release, sysctl_int("hw.ncpu"), sysctl_u64("hw.memsize"), free_bytes("/"), free_bytes("/var"),
             access("/var/jb", F_OK)==0 ? "true":"false", dopamine ? "true":"false", port_open(22)?"true":"false", port_open(27042)?"true":"false", port_open(6000)?"true":"false",
             lock_state_name(lock_snapshot),lock_snapshot.lock_known?(lock_snapshot.locked?"true":"false"):"null",
             screen_state_name(lock_snapshot),lock_snapshot.screen_blank_known?(lock_snapshot.screen_blanked?"true":"false"):"null",

@@ -7,8 +7,10 @@ source "$ROOT/Scripts/version.sh"
 
 mkdir -p build/tests
 
-TOKEN_FILE="$ROOT/.roottools-token"
-AGENT_TOKEN_FILE="$ROOT/.roottools-agent-token"
+CREDENTIAL_PROFILE="${ROOTTOOLS_CREDENTIAL_PROFILE:-installed}"
+roottools_prepare_credential_profile "$ROOT" "$CREDENTIAL_PROFILE"
+TOKEN_FILE="$(roottools_owner_token_file "$ROOT" "$CREDENTIAL_PROFILE")"
+AGENT_TOKEN_FILE="$(roottools_agent_token_file "$ROOT" "$CREDENTIAL_PROFILE")"
 TOKEN="$(roottools_read_or_create_token "$TOKEN_FILE" "Owner token")"
 AGENT_TOKEN="$(roottools_read_or_create_token "$AGENT_TOKEN_FILE" "Agent token")"
 PACKAGE_VERSION="$(roottools_package_version "$ROOT/VERSION")"
@@ -52,6 +54,7 @@ clang -std=c11 -Wall -Wextra -Werror -I Daemon \
 build/tests/principal_store_test
 python3 Tests/package_builder_test.py
 python3 Tests/package_ipa_test.py
+python3 Tests/credential_migration_test.py
 python3 Tests/remote_qualification_test.py
 build/tests/control_plane_test --catalog | python3 -c '
 import json, sys
@@ -70,6 +73,7 @@ assert catalog["invariants"] == {"r3Exposed": False, "rawPrivilegedShellExposed"
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     -e "s/__ROOTTOOLS_AGENT_TOKEN__/$AGENT_TOKEN/g" \
     -e "s/__ROOTTOOLS_VERSION__/$DAEMON_VERSION/g" \
+    -e "s/__ROOTTOOLS_PACKAGE_VERSION__/$PACKAGE_VERSION/g" \
     Daemon/roottools_execd.c > build/tests/roottools_execd_mac.c
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     Daemon/roottools_updater.c > build/tests/roottools_updater_mac.c
@@ -94,7 +98,8 @@ python3 -m py_compile \
   Scripts/verify-device.py \
   Scripts/migrate-v09-updater-path.py \
   Scripts/package-rootless-deb.py \
-  Scripts/package-ipa.py
+  Scripts/package-ipa.py \
+  Scripts/prepare-credential-migration.py
 bash -n Scripts/*.sh Tests/*.sh
 
 echo "RootTools contract tests: PASS"

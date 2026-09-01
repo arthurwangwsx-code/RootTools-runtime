@@ -2,6 +2,20 @@
 
 ## Unreleased
 
+## 0.23.0-2
+
+### Changed
+
+- Public source history and private personalized binary distribution now have separate, fail-closed repository contracts.
+- Credential profiles isolate the currently installed device pair from candidate and rollback builds without copying or overwriting active tokens.
+- Daemon status, Hello, Self-Updater health and physical verification now carry the exact Debian package version so revision-only upgrades cannot pass on an older binary.
+- Offline credential-migration evidence proves candidate/rollback artifact identity and token pairing without recording plaintext credentials.
+
+### Security
+
+- Private candidate releases reject the installed credential profile and record only SHA-256 credential fingerprints in the source/build manifest.
+- Candidate packages must exclude installed credentials, contain the selected target profile, and retain an exact rollback package before physical migration begins.
+
 ## 0.23.0-1
 
 ### Changed

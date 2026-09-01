@@ -45,7 +45,12 @@ class FakeAdmin:
         self.port = 45822
 
     def status(self) -> dict:
-        return {"daemonVersion": "0.23.0", "uid": 0, "jailbreakRootless": True}
+        return {
+            "daemonVersion": "0.23.0",
+            "packageVersion": "0.23.0-2",
+            "uid": 0,
+            "jailbreakRootless": True,
+        }
 
     def principals(self) -> dict:
         return {"principals": []}
@@ -170,7 +175,9 @@ def main() -> int:
             principal_token_file=principal_token_file,
             other_principal_token_file=other_principal_token_file,
             duration_minutes=30,
+            credential_profile="installed",
             expected_daemon_version="0.23.0",
+            expected_package_version="0.23.0-2",
             state_file=state_file,
         )
         prepared = MODULE.prepare(prepare_args)

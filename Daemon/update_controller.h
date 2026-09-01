@@ -18,7 +18,7 @@ typedef struct {
     char request_id[128];
     char package_id[96];
     char state[32];
-    char target_version[64];
+    char target_version[128];
     char result[128];
     char error[512];
     long long created_at;

@@ -6,7 +6,7 @@ source "$ROOT/Scripts/version.sh"
 
 PACKAGE_VERSION="$(roottools_package_version "$ROOT/VERSION")"
 DAEMON_VERSION="$(roottools_daemon_version "$PACKAGE_VERSION")"
-[[ "$PACKAGE_VERSION" == "0.23.0-1" ]]
+[[ "$PACKAGE_VERSION" == "0.23.0-2" ]]
 [[ "$DAEMON_VERSION" == "0.23.0" ]]
 
 INVALID_VERSION_FILE="$(mktemp "${TMPDIR:-/tmp}/roottools-invalid-version.XXXXXX")"

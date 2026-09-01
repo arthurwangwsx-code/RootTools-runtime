@@ -5,10 +5,14 @@ cd "$ROOT"
 source "$ROOT/Scripts/credential-files.sh"
 source "$ROOT/Scripts/version.sh"
 
-TOKEN_FILE="$ROOT/.roottools-token"
-AGENT_TOKEN_FILE="$ROOT/.roottools-agent-token"
+CREDENTIAL_PROFILE="${ROOTTOOLS_CREDENTIAL_PROFILE:-installed}"
+roottools_prepare_credential_profile "$ROOT" "$CREDENTIAL_PROFILE"
+TOKEN_FILE="$(roottools_owner_token_file "$ROOT" "$CREDENTIAL_PROFILE")"
+AGENT_TOKEN_FILE="$(roottools_agent_token_file "$ROOT" "$CREDENTIAL_PROFILE")"
 TOKEN="$(roottools_read_or_create_token "$TOKEN_FILE" "Owner token")"
 AGENT_TOKEN="$(roottools_read_or_create_token "$AGENT_TOKEN_FILE" "Agent token")"
+TOKEN_FINGERPRINT="$(roottools_token_fingerprint "$TOKEN_FILE" "Owner token")"
+AGENT_TOKEN_FINGERPRINT="$(roottools_token_fingerprint "$AGENT_TOKEN_FILE" "Agent token")"
 PACKAGE_VERSION="$(roottools_package_version "$ROOT/VERSION")"
 DAEMON_VERSION="$(roottools_daemon_version "$PACKAGE_VERSION")"
 
@@ -61,9 +65,13 @@ enum BuildToken {
 EOF
 printf '%s\n' "$PACKAGE_VERSION" | write_if_changed build/generated/package-version
 printf '%s\n' "$DAEMON_VERSION" | write_if_changed build/generated/daemon-version
+printf '%s\n' "$CREDENTIAL_PROFILE" | write_if_changed build/generated/credential-profile
+printf '%s\n' "$TOKEN_FINGERPRINT" | write_if_changed build/generated/owner-token-fingerprint
+printf '%s\n' "$AGENT_TOKEN_FINGERPRINT" | write_if_changed build/generated/agent-token-fingerprint
 sed -e "s/__ROOTTOOLS_TOKEN__/$TOKEN/g" \
     -e "s/__ROOTTOOLS_AGENT_TOKEN__/$AGENT_TOKEN/g" \
     -e "s/__ROOTTOOLS_VERSION__/$DAEMON_VERSION/g" \
+    -e "s/__ROOTTOOLS_PACKAGE_VERSION__/$PACKAGE_VERSION/g" \
     Daemon/roottools_execd.c > build/generated/roottools_execd.c.tmp
 if [[ ! -f build/generated/roottools_execd.c ]] || ! cmp -s build/generated/roottools_execd.c.tmp build/generated/roottools_execd.c; then
   mv build/generated/roottools_execd.c.tmp build/generated/roottools_execd.c

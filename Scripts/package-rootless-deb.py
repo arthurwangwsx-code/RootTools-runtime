@@ -77,10 +77,26 @@ def validate_version_inputs(app: Path, daemon: Path, version: str) -> None:
         if not stamp.is_file() or stamp.read_text().strip() != expected:
             raise SystemExit(f"stale or missing build version stamp: {stamp} (expected {expected})")
 
+    profile_stamp = ROOT / "build/generated/credential-profile"
+    fingerprint_stamps = (
+        ROOT / "build/generated/owner-token-fingerprint",
+        ROOT / "build/generated/agent-token-fingerprint",
+    )
+    if not profile_stamp.is_file() or not profile_stamp.read_text().strip():
+        raise SystemExit(f"stale or missing credential profile stamp: {profile_stamp}")
+    for stamp in fingerprint_stamps:
+        value = stamp.read_text().strip() if stamp.is_file() else ""
+        if len(value) != 64 or any(character not in "0123456789abcdef" for character in value):
+            raise SystemExit(f"stale or malformed credential fingerprint stamp: {stamp}")
+
     generated_daemon = ROOT / "build/generated/roottools_execd.c"
     expected_define = f'#define VERSION "{daemon_version}"'
-    if not generated_daemon.is_file() or expected_define not in generated_daemon.read_text():
+    expected_package_define = f'#define PACKAGE_VERSION "{version}"'
+    generated_text = generated_daemon.read_text() if generated_daemon.is_file() else ""
+    if expected_define not in generated_text:
         raise SystemExit(f"generated daemon version mismatch: expected {expected_define}")
+    if expected_package_define not in generated_text:
+        raise SystemExit(f"generated daemon package version mismatch: expected {expected_package_define}")
     if daemon.stat().st_mtime < generated_daemon.stat().st_mtime:
         raise SystemExit(f"daemon binary is older than generated version source: {daemon}")
 

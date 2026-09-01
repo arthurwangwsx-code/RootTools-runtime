@@ -44,6 +44,7 @@ def load_expected_daemon_version() -> str:
 
 
 DEFAULT_EXPECTED_DAEMON_VERSION = load_expected_daemon_version()
+DEFAULT_EXPECTED_PACKAGE_VERSION = (ROOT / "VERSION").read_text().strip()
 
 
 def require(condition: bool, message: str) -> None:
@@ -98,9 +99,19 @@ def assert_receipt(
         require(receipt.get("result") == result, f"unexpected result for {capability_id}: {receipt}")
 
 
-def install(udid: str) -> None:
+def credential_files(profile: str) -> tuple[Path, Path]:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", profile) or ".." in profile:
+        raise VerificationFailure(f"invalid credential profile: {profile}")
+    if profile == "installed":
+        return DEFAULT_TOKEN, DEFAULT_ADMIN_TOKEN
+    directory = ROOT / ".roottools-credentials" / profile
+    return directory / "agent-token", directory / "owner-token"
+
+
+def install(udid: str, credential_profile: str) -> None:
     env = os.environ.copy()
     env["ROOTTOOLS_UDID"] = udid
+    env["ROOTTOOLS_CREDENTIAL_PROFILE"] = credential_profile
     subprocess.run(["bash", str(ROOT / "Scripts/install-jailbreak.sh")], cwd=ROOT, env=env, check=True)
 
 
@@ -125,15 +136,20 @@ def run_regression(
     udid: str,
     full: bool,
     expected_daemon_version: str,
+    expected_package_version: str,
 ) -> None:
     status = client.status()
     require(
         status.get("daemonVersion") == expected_daemon_version,
         f"expected daemon {expected_daemon_version}, got {status}",
     )
+    require(
+        status.get("packageVersion") == expected_package_version,
+        f"expected package {expected_package_version}, got {status}",
+    )
     require(status.get("uid") == 0, f"daemon must be UID 0: {status}")
     require(status.get("jailbreakRootless") is True, f"rootless bootstrap is unavailable: {status}")
-    step("daemon identity", f"v{status['daemonVersion']} uid={status['uid']}")
+    step("daemon identity", f"daemon={status['daemonVersion']} package={status['packageVersion']} uid={status['uid']}")
 
     lock_state = client.lock_state()
     require(lock_state.get("lockState") in {"locked", "unlocked", "unknown"}, f"invalid lock state: {lock_state}")
@@ -372,7 +388,9 @@ def run_regression(
 
     still_alive = client.status()
     require(
-        still_alive.get("uid") == 0 and still_alive.get("daemonVersion") == expected_daemon_version,
+        still_alive.get("uid") == 0
+        and still_alive.get("daemonVersion") == expected_daemon_version
+        and still_alive.get("packageVersion") == expected_package_version,
         "daemon died with UI",
     )
     step("daemon survives UI exit", "Device Service still responds")
@@ -396,12 +414,18 @@ def run_regression(
 def main() -> int:
     parser = argparse.ArgumentParser(description="Verify RootTools on a physical jailbreak iPhone")
     parser.add_argument("--udid", default=os.environ.get("ROOTTOOLS_UDID"))
-    parser.add_argument("--token-file", type=Path, default=DEFAULT_TOKEN)
-    parser.add_argument("--admin-token-file", type=Path, default=DEFAULT_ADMIN_TOKEN)
+    parser.add_argument("--credential-profile", default="installed")
+    parser.add_argument("--token-file", type=Path)
+    parser.add_argument("--admin-token-file", type=Path)
     parser.add_argument("--expected-daemon-version", default=DEFAULT_EXPECTED_DAEMON_VERSION)
+    parser.add_argument("--expected-package-version", default=DEFAULT_EXPECTED_PACKAGE_VERSION)
     parser.add_argument("--install", action="store_true", help="Build and install RootTools before verification")
     parser.add_argument("--full", action="store_true", help="Run safe mutation/post-condition tests")
     args = parser.parse_args()
+
+    default_token, default_admin_token = credential_files(args.credential_profile)
+    args.token_file = args.token_file or default_token
+    args.admin_token_file = args.admin_token_file or default_admin_token
 
     udid = args.udid
     if not udid:
@@ -416,15 +440,23 @@ def main() -> int:
 
     try:
         if args.install:
-            install(udid)
-            step("install", udid)
+            install(udid, args.credential_profile)
+            step("install", f"{udid} profile={args.credential_profile}")
         token = load_token(args.token_file)
         admin_token = load_token(args.admin_token_file)
         require(token != admin_token, "Agent and admin credentials must be distinct")
         with device_proxy(udid) as port:
             client = DeviceServiceClient(port, token, caller="physical-verifier")
             admin_client = DeviceServiceClient(port, admin_token, caller="physical-owner-verifier")
-            run_regression(client, admin_client, port, udid, args.full, args.expected_daemon_version)
+            run_regression(
+                client,
+                admin_client,
+                port,
+                udid,
+                args.full,
+                args.expected_daemon_version,
+                args.expected_package_version,
+            )
         print("RootTools physical-device verification: PASS")
         return 0
     except (DeviceServiceError, VerificationFailure, subprocess.CalledProcessError, OSError) as error:

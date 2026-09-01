@@ -23,7 +23,21 @@ make_checkout() {
 
 CANONICAL="$TEST_ROOT/canonical"
 make_checkout "$CANONICAL" "https://github.com/arthurwangwsx-code/RootTools-runtime.git"
-roottools_require_canonical_release_checkout "$CANONICAL" "$ROOTTOOLS_CANONICAL_REPO"
+roottools_require_canonical_source_checkout "$CANONICAL"
+roottools_require_canonical_release_checkout "$CANONICAL" "$ROOTTOOLS_CANONICAL_SOURCE_REPO"
+roottools_require_canonical_release_checkout "$CANONICAL" "$ROOTTOOLS_PRIVATE_RELEASE_REPO"
+roottools_require_release_target "$ROOTTOOLS_CANONICAL_SOURCE_REPO" PUBLIC 1
+roottools_require_release_target "$ROOTTOOLS_PRIVATE_RELEASE_REPO" PRIVATE 0
+roottools_require_release_target "$ROOTTOOLS_PRIVATE_RELEASE_REPO" PRIVATE 1
+
+if roottools_require_release_target "$ROOTTOOLS_CANONICAL_SOURCE_REPO" PUBLIC 0 >/dev/null 2>&1; then
+  echo "public source releases containing personalized binaries must be draft-only" >&2
+  exit 1
+fi
+if roottools_require_release_target "$ROOTTOOLS_PRIVATE_RELEASE_REPO" PUBLIC 1 >/dev/null 2>&1; then
+  echo "binary release repository must remain private" >&2
+  exit 1
+fi
 
 if roottools_require_canonical_release_checkout "$CANONICAL" "arthurwangwsx-code/RootTools" >/dev/null 2>&1; then
   echo "non-canonical release repositories must be rejected" >&2
@@ -32,13 +46,13 @@ fi
 
 LEGACY="$TEST_ROOT/legacy"
 make_checkout "$LEGACY" "https://github.com/arthurwangwsx-code/RootTools.git"
-if roottools_require_canonical_release_checkout "$LEGACY" "$ROOTTOOLS_CANONICAL_REPO" >/dev/null 2>&1; then
+if roottools_require_canonical_source_checkout "$LEGACY" >/dev/null 2>&1; then
   echo "legacy origins must be rejected" >&2
   exit 1
 fi
 
 git -C "$CANONICAL" switch -q -c release-test
-if roottools_require_canonical_release_checkout "$CANONICAL" "$ROOTTOOLS_CANONICAL_REPO" >/dev/null 2>&1; then
+if roottools_require_canonical_source_checkout "$CANONICAL" >/dev/null 2>&1; then
   echo "non-main release branches must be rejected" >&2
   exit 1
 fi
@@ -46,7 +60,7 @@ fi
 git -C "$CANONICAL" switch -q main
 git -C "$CANONICAL" config --unset branch.main.remote
 git -C "$CANONICAL" config --unset branch.main.merge
-if roottools_require_canonical_release_checkout "$CANONICAL" "$ROOTTOOLS_CANONICAL_REPO" >/dev/null 2>&1; then
+if roottools_require_canonical_source_checkout "$CANONICAL" >/dev/null 2>&1; then
   echo "main without origin/main upstream must be rejected" >&2
   exit 1
 fi

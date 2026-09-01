@@ -2,6 +2,7 @@ import Foundation
 
 struct DeviceStatus: Codable, Equatable {
     var daemonVersion: String
+    var packageVersion: String?
     var uid: Int
     var machine: String
     var osBuild: String
@@ -24,7 +25,7 @@ struct DeviceStatus: Codable, Equatable {
     var automationPendingCount: Int?
 
     static let unavailable = DeviceStatus(
-        daemonVersion: "—", uid: -1, machine: "—", osBuild: "—", kernel: "—",
+        daemonVersion: "—", packageVersion: nil, uid: -1, machine: "—", osBuild: "—", kernel: "—",
         cpuCount: 0, memoryBytes: 0, rootFreeBytes: 0, varFreeBytes: 0,
         jailbreakRootless: false, dopamineRunning: false, sshReady: false,
         fridaReady: false, zxTouchReady: false,
@@ -820,4 +821,3 @@ enum ToolKind: String, CaseIterable, Identifiable {
         }
     }
 }
-

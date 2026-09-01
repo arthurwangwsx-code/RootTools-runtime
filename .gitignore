@@ -3,6 +3,7 @@ Generated/
 RootTools.xcodeproj/
 .roottools-token
 .roottools-agent-token
+.roottools-credentials/
 .DS_Store
 __pycache__/
 *.pyc

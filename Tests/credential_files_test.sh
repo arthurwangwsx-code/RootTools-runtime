@@ -63,4 +63,37 @@ if command -v zsh >/dev/null 2>&1; then
     zsh-test "$ROOT/Scripts/credential-files.sh" "$NEW_TOKEN"
 fi
 
+PROFILE_ROOT="$TEST_ROOT/profile-root"
+mkdir "$PROFILE_ROOT"
+roottools_prepare_credential_profile "$PROFILE_ROOT" "candidate-1"
+[[ "$(file_mode "$PROFILE_ROOT/.roottools-credentials")" == "700" ]]
+[[ "$(file_mode "$PROFILE_ROOT/.roottools-credentials/candidate-1")" == "700" ]]
+PROFILE_OWNER="$(roottools_owner_token_file "$PROFILE_ROOT" "candidate-1")"
+PROFILE_AGENT="$(roottools_agent_token_file "$PROFILE_ROOT" "candidate-1")"
+[[ "$PROFILE_OWNER" == "$PROFILE_ROOT/.roottools-credentials/candidate-1/owner-token" ]]
+[[ "$PROFILE_AGENT" == "$PROFILE_ROOT/.roottools-credentials/candidate-1/agent-token" ]]
+roottools_read_or_create_token "$PROFILE_OWNER" "profile Owner token" >/dev/null
+roottools_read_or_create_token "$PROFILE_AGENT" "profile Agent token" >/dev/null
+[[ "$(roottools_token_fingerprint "$PROFILE_OWNER" "profile Owner token" | wc -c | tr -d '[:space:]')" == "64" ]]
+
+[[ "$(roottools_owner_token_file "$PROFILE_ROOT" installed)" == "$PROFILE_ROOT/.roottools-token" ]]
+[[ "$(roottools_agent_token_file "$PROFILE_ROOT" installed)" == "$PROFILE_ROOT/.roottools-agent-token" ]]
+
+if roottools_validate_credential_profile "../escape" >/dev/null 2>&1; then
+  echo "credential profile traversal must be rejected" >&2
+  exit 1
+fi
+if roottools_validate_credential_profile "Uppercase" >/dev/null 2>&1; then
+  echo "credential profile uppercase names must be rejected" >&2
+  exit 1
+fi
+
+SYMLINK_PROFILE_ROOT="$TEST_ROOT/symlink-profile-root"
+mkdir "$SYMLINK_PROFILE_ROOT" "$TEST_ROOT/profile-target"
+ln -s "$TEST_ROOT/profile-target" "$SYMLINK_PROFILE_ROOT/.roottools-credentials"
+if roottools_prepare_credential_profile "$SYMLINK_PROFILE_ROOT" candidate >/dev/null 2>&1; then
+  echo "symbolic-link credential profile roots must be rejected" >&2
+  exit 1
+fi
+
 echo "Credential file tests: PASS"

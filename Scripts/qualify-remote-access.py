@@ -8,6 +8,7 @@ import contextlib
 import json
 import os
 from pathlib import Path
+import re
 import stat
 import sys
 import tempfile
@@ -43,10 +44,20 @@ def load_expected_daemon_version() -> str:
 
 
 DEFAULT_EXPECTED_DAEMON_VERSION = load_expected_daemon_version()
+DEFAULT_EXPECTED_PACKAGE_VERSION = (ROOT / "VERSION").read_text().strip()
 
 
 class QualificationFailure(RuntimeError):
     pass
+
+
+def credential_files(profile: str) -> tuple[Path, Path]:
+    if not re.fullmatch(r"[a-z0-9][a-z0-9._-]{0,63}", profile) or ".." in profile:
+        raise QualificationFailure(f"invalid credential profile: {profile}")
+    if profile == "installed":
+        return DEFAULT_ADMIN_TOKEN, DEFAULT_AGENT_TOKEN
+    directory = ROOT / ".roottools-credentials" / profile
+    return directory / "owner-token", directory / "agent-token"
 
 
 def require(condition: bool, message: str) -> None:
@@ -73,8 +84,15 @@ def receipt_evidence(receipt: dict) -> dict:
     }
 
 
-def validate_device_status(status: dict, expected_version: str) -> None:
-    require(status.get("daemonVersion") == expected_version, f"expected daemon {expected_version}, got: {status}")
+def validate_device_status(status: dict, expected_daemon_version: str, expected_package_version: str) -> None:
+    require(
+        status.get("daemonVersion") == expected_daemon_version,
+        f"expected daemon {expected_daemon_version}, got: {status}",
+    )
+    require(
+        status.get("packageVersion") == expected_package_version,
+        f"expected package {expected_package_version}, got: {status}",
+    )
     require(status.get("uid") == 0, f"daemon must run as UID 0: {status}")
     require(status.get("jailbreakRootless") is True, f"rootless jailbreak is unavailable: {status}")
 
@@ -215,7 +233,7 @@ def prepare(args: argparse.Namespace) -> dict:
     receipts: list[dict] = []
 
     with usb_admin_client(args.udid, admin_token) as (udid, admin):
-        validate_device_status(admin.status(), args.expected_daemon_version)
+        validate_device_status(admin.status(), args.expected_daemon_version, args.expected_package_version)
         existing = {item.get("principalId") for item in admin.principals().get("principals", [])}
         for candidate in (principal_id, other_principal_id):
             require(candidate not in existing, f"principal already exists and its one-time token cannot be recovered: {candidate}")
@@ -266,7 +284,7 @@ def prepare(args: argparse.Namespace) -> dict:
             port = int(remote["transport"]["port"])
 
             principal = direct_client(host, port, principal_token, "remote-qualification-host")
-            validate_device_status(principal.status(), args.expected_daemon_version)
+            validate_device_status(principal.status(), args.expected_daemon_version, args.expected_package_version)
             require(bool(principal.performance()), "remote performance snapshot is empty")
             expect_remote_rejected(direct_client(host, port, admin_token, "remote-owner-negative"), "Owner credential")
             expect_remote_rejected(direct_client(host, port, agent_token, "remote-agent-negative"), "legacy Agent credential")
@@ -280,6 +298,8 @@ def prepare(args: argparse.Namespace) -> dict:
                 "phase": "prepared",
                 "deviceUdid": udid,
                 "expectedDaemonVersion": args.expected_daemon_version,
+                "expectedPackageVersion": args.expected_package_version,
+                "credentialProfile": args.credential_profile,
                 "principalId": principal_id,
                 "principalTokenFile": str(args.principal_token_file.resolve()),
                 "otherPrincipalId": other_principal_id,
@@ -314,7 +334,11 @@ def verify_remote(args: argparse.Namespace) -> dict:
     host, port = str(state["host"]), int(state["port"])
 
     principal = direct_client(host, port, principal_token, "remote-qualification-off-usb")
-    validate_device_status(principal.status(), str(state["expectedDaemonVersion"]))
+    validate_device_status(
+        principal.status(),
+        str(state["expectedDaemonVersion"]),
+        str(state["expectedPackageVersion"]),
+    )
     require(bool(principal.performance()), "off-USB performance snapshot is empty")
     launch = principal.action("device.app.launch", {"bundleID": ROOTTOOLS_APP})
     receipt_ok(launch, "device.app.launch")
@@ -448,8 +472,9 @@ def cleanup(args: argparse.Namespace) -> dict:
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="Qualify RootTools Remote Access on a physical device")
     parser.add_argument("--state-file", type=Path, default=DEFAULT_STATE)
-    parser.add_argument("--admin-token-file", type=Path, default=DEFAULT_ADMIN_TOKEN)
-    parser.add_argument("--agent-token-file", type=Path, default=DEFAULT_AGENT_TOKEN)
+    parser.add_argument("--credential-profile", default="installed")
+    parser.add_argument("--admin-token-file", type=Path)
+    parser.add_argument("--agent-token-file", type=Path)
     subparsers = parser.add_subparsers(dest="phase", required=True)
 
     prepare_parser = subparsers.add_parser("prepare", help="USB: create a least-privilege Host and start a session")
@@ -460,6 +485,7 @@ def build_parser() -> argparse.ArgumentParser:
     prepare_parser.add_argument("--other-principal-token-file", type=Path, default=DEFAULT_OTHER_PRINCIPAL_TOKEN)
     prepare_parser.add_argument("--duration-minutes", type=int, default=30, choices=range(5, 481), metavar="5..480")
     prepare_parser.add_argument("--expected-daemon-version", default=DEFAULT_EXPECTED_DAEMON_VERSION)
+    prepare_parser.add_argument("--expected-package-version", default=DEFAULT_EXPECTED_PACKAGE_VERSION)
 
     subparsers.add_parser("verify", help="off-USB: require no USB device and run R0/R1 plus negative auth checks")
 
@@ -472,6 +498,9 @@ def build_parser() -> argparse.ArgumentParser:
 def main() -> int:
     args = build_parser().parse_args()
     try:
+        default_admin_token, default_agent_token = credential_files(args.credential_profile)
+        args.admin_token_file = args.admin_token_file or default_admin_token
+        args.agent_token_file = args.agent_token_file or default_agent_token
         if args.phase == "prepare":
             result = prepare(args)
         elif args.phase == "verify":

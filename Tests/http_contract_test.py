@@ -482,6 +482,7 @@ def main() -> int:
             status, principal_status = request(port, principal_token, "GET", "/v1/status")
             assert status == 200
             assert principal_status["daemonVersion"]
+            assert principal_status["packageVersion"]
 
             status, remote_access = request(port, args.admin_token, "GET", "/v1/remote-access")
             assert status == 200
@@ -529,6 +530,7 @@ def main() -> int:
             status, remote_principal_status = request(remote_access_port, principal_token, "GET", "/v1/status")
             assert status == 200
             assert remote_principal_status["daemonVersion"]
+            assert remote_principal_status["packageVersion"]
 
             principal_write = action(
                 port,

@@ -4,11 +4,11 @@ set -euo pipefail
 usage() {
   cat <<'EOF'
 Usage:
-  Scripts/release-local.sh <version> [--skip-build] [--draft]
+  Scripts/release-local.sh <version> --credential-profile <profile> [--repo <owner/name>] [--skip-build] [--draft]
 
 Examples:
-  Scripts/release-local.sh 0.23.0-1
-  Scripts/release-local.sh 0.22.0-3 --skip-build
+  Scripts/release-local.sh 0.23.0-2 --credential-profile candidate-v023 --draft
+  Scripts/release-local.sh 0.23.0-2 --credential-profile candidate-v023 --skip-build --draft
 
 The version is both the Debian package version and the GitHub release tag
 without the leading "v". Full tests/builds run on this Mac by default. GitHub
@@ -22,10 +22,22 @@ shift || true
 
 SKIP_BUILD=0
 DRAFT=0
+CREDENTIAL_PROFILE=""
+REPO=""
 while [[ $# -gt 0 ]]; do
   case "$1" in
     --skip-build) SKIP_BUILD=1 ;;
     --draft) DRAFT=1 ;;
+    --credential-profile)
+      shift
+      [[ $# -gt 0 ]] || { echo "--credential-profile requires a value" >&2; exit 64; }
+      CREDENTIAL_PROFILE="$1"
+      ;;
+    --repo)
+      shift
+      [[ $# -gt 0 ]] || { echo "--repo requires a value" >&2; exit 64; }
+      REPO="$1"
+      ;;
     -h|--help) usage; exit 0 ;;
     *) echo "unknown argument: $1" >&2; usage; exit 64 ;;
   esac
@@ -41,6 +53,15 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 source "$ROOT/Scripts/repository-boundary.sh"
 source "$ROOT/Scripts/version.sh"
+source "$ROOT/Scripts/credential-files.sh"
+
+[[ -n "$CREDENTIAL_PROFILE" ]] || { echo "--credential-profile is required for release provenance" >&2; exit 64; }
+roottools_validate_credential_profile "$CREDENTIAL_PROFILE"
+REPO="${REPO:-${ROOTTOOLS_RELEASE_REPO:-$ROOTTOOLS_PRIVATE_RELEASE_REPO}}"
+if [[ "$REPO" == "$ROOTTOOLS_PRIVATE_RELEASE_REPO" && "$CREDENTIAL_PROFILE" == "installed" ]]; then
+  echo "private candidate releases must use an isolated non-installed credential profile" >&2
+  exit 65
+fi
 
 CANONICAL_VERSION="$(roottools_package_version "$ROOT/VERSION")"
 if [[ "$VERSION" != "$CANONICAL_VERSION" ]]; then
@@ -55,7 +76,6 @@ RELEASE_DIR="build/release/$TAG"
 CHECKSUMS="$RELEASE_DIR/SHA256SUMS"
 MANIFEST="$RELEASE_DIR/SOURCE_BUILD_MANIFEST.json"
 NOTES="$RELEASE_DIR/RELEASE_NOTES.md"
-REPO="${ROOTTOOLS_RELEASE_REPO:-$ROOTTOOLS_CANONICAL_REPO}"
 
 echo "== RootTools Runtime local release $TAG =="
 
@@ -66,21 +86,18 @@ if [[ -n "$(git status --porcelain)" ]]; then
 fi
 
 git diff --check
-roottools_require_canonical_release_checkout "$ROOT" "$REPO"
+roottools_require_canonical_source_checkout "$ROOT"
 command -v gh >/dev/null || { echo "gh CLI is required" >&2; exit 3; }
 gh auth status >/dev/null
 
 REPO_VISIBILITY="$(gh repo view "$REPO" --json visibility --jq .visibility)"
-if [[ "$REPO_VISIBILITY" == "PUBLIC" && "$DRAFT" -ne 1 ]]; then
-  echo "personalized RootTools binaries embed device credentials and must not be published from a public repository" >&2
-  echo "use --draft for maintainer-only GitHub storage, or publish from an explicitly private release repository" >&2
-  exit 6
-fi
+roottools_require_release_target "$REPO" "$REPO_VISIBILITY" "$DRAFT"
 
 SOURCE_HEAD="$(git rev-parse HEAD)"
 SOURCE_TREE="$(git rev-parse HEAD^{tree})"
 SOURCE_DATE_EPOCH="${SOURCE_DATE_EPOCH:-$(git show -s --format=%ct HEAD)}"
 export SOURCE_DATE_EPOCH
+export ROOTTOOLS_CREDENTIAL_PROFILE="$CREDENTIAL_PROFILE"
 
 if [[ "$SKIP_BUILD" -eq 0 ]]; then
   bash Scripts/test.sh
@@ -91,6 +108,14 @@ else
   [[ -f "$DEB" ]] || { echo "missing prebuilt artifact: $DEB" >&2; exit 4; }
   [[ -f "$IPA" ]] || { echo "missing prebuilt artifact: $IPA" >&2; exit 4; }
 fi
+
+BUILT_PROFILE="$(tr -d '[:space:]' < build/generated/credential-profile)"
+[[ "$BUILT_PROFILE" == "$CREDENTIAL_PROFILE" ]] || {
+  echo "built credential profile mismatch: expected $CREDENTIAL_PROFILE, got ${BUILT_PROFILE:-<missing>}" >&2
+  exit 7
+}
+OWNER_FINGERPRINT="$(tr -d '[:space:]' < build/generated/owner-token-fingerprint)"
+AGENT_FINGERPRINT="$(tr -d '[:space:]' < build/generated/agent-token-fingerprint)"
 
 [[ "$(git rev-parse HEAD)" == "$SOURCE_HEAD" ]] || { echo "source HEAD changed during release build" >&2; exit 7; }
 [[ "$(git rev-parse HEAD^{tree})" == "$SOURCE_TREE" ]] || { echo "source tree changed during release build" >&2; exit 7; }
@@ -107,7 +132,7 @@ else
   (cd "$(dirname "$DEB")" && sha256sum "$(basename "$DEB")" "$(basename "$IPA")") > "$CHECKSUMS"
 fi
 
-python3 - "$ROOT" "$REPO" "$VERSION" "$TAG" "$DEB" "$IPA" "$MANIFEST" "$SOURCE_HEAD" "$SOURCE_TREE" "$SOURCE_DATE_EPOCH" <<'PY'
+python3 - "$ROOT" "$ROOTTOOLS_CANONICAL_SOURCE_REPO" "$REPO" "$VERSION" "$TAG" "$DEB" "$IPA" "$MANIFEST" "$SOURCE_HEAD" "$SOURCE_TREE" "$SOURCE_DATE_EPOCH" "$CREDENTIAL_PROFILE" "$OWNER_FINGERPRINT" "$AGENT_FINGERPRINT" <<'PY'
 import hashlib
 import json
 from pathlib import Path
@@ -115,7 +140,22 @@ import plistlib
 import subprocess
 import sys
 
-root, repository, version, tag, deb, ipa, manifest, commit, tree, source_date_epoch = sys.argv[1:]
+(
+    root,
+    source_repository,
+    artifact_repository,
+    version,
+    tag,
+    deb,
+    ipa,
+    manifest,
+    commit,
+    tree,
+    source_date_epoch,
+    credential_profile,
+    owner_fingerprint,
+    agent_fingerprint,
+) = sys.argv[1:]
 root_path = Path(root)
 app = root_path / "build/DerivedData/Build/Products/Release-iphoneos/RootTools.app"
 with (app / "Info.plist").open("rb") as stream:
@@ -132,7 +172,8 @@ def artifact(path_value: str) -> dict:
 payload = {
     "schemaVersion": 1,
     "product": "RootTools Runtime",
-    "repository": repository,
+    "sourceRepository": source_repository,
+    "artifactRepository": artifact_repository,
     "version": version,
     "tag": tag,
     "source": {
@@ -155,7 +196,10 @@ payload = {
     "artifacts": [artifact(deb), artifact(ipa)],
     "distribution": {
         "credentialModel": "personalized build",
-        "requiredGitHubVisibility": "draft or private",
+        "credentialProfile": credential_profile,
+        "ownerCredentialFingerprint": owner_fingerprint,
+        "agentCredentialFingerprint": agent_fingerprint,
+        "requiredGitHubVisibility": "private, or draft-only in the public source repository",
     },
 }
 Path(manifest).write_text(json.dumps(payload, indent=2, sort_keys=True) + "\n")
@@ -186,6 +230,25 @@ RootTools Runtime for iOS 16+ Dopamine/rootless jailbreak devices.
 See \`CHANGELOG.md\` and \`docs/handoff/CURRENT_STATE.md\` for the current capability boundary.
 EOF
 
+if [[ "$REPO_VISIBILITY" == "PRIVATE" ]]; then
+  DISTRIBUTION_NOTE="This personalized build is stored in the authorized private binary repository."
+else
+  DISTRIBUTION_NOTE="This personalized build is stored as a maintainer-only draft in the public source repository."
+fi
+
+python3 - "$NOTES" "$DISTRIBUTION_NOTE" <<'PY'
+from pathlib import Path
+import sys
+
+path = Path(sys.argv[1])
+text = path.read_text()
+text = text.replace(
+    "This personalized build contains device credentials and is stored as a maintainer-only draft on the public source repository.",
+    sys.argv[2],
+)
+path.write_text(text)
+PY
+
 if git rev-parse "$TAG" >/dev/null 2>&1; then
   CURRENT_TAG_COMMIT="$(git rev-list -n 1 "$TAG")"
   HEAD_COMMIT="$(git rev-parse HEAD)"
@@ -211,21 +274,26 @@ RELEASE_ARGS=(
   --repo "$REPO"
   --title "RootTools Runtime $TAG"
   --notes-file "$NOTES"
-  --verify-tag
 )
+if [[ "$REPO" == "$ROOTTOOLS_CANONICAL_SOURCE_REPO" ]]; then
+  RELEASE_ARGS+=(--verify-tag)
+else
+  RELEASE_ARGS+=(--target main)
+fi
 [[ "$DRAFT" -eq 1 ]] && RELEASE_ARGS+=(--draft)
 
 if gh release view "$TAG" --repo "$REPO" >/dev/null 2>&1; then
   gh release upload "$TAG" "$DEB" "$IPA" "$CHECKSUMS" "$MANIFEST" "INSTALL.md" "CHANGELOG.md" \
     --repo "$REPO" --clobber
-  gh release edit "$TAG" --repo "$REPO" \
-    --title "RootTools Runtime $TAG" --notes-file "$NOTES"
+  EDIT_ARGS=("$TAG" --repo "$REPO" --title "RootTools Runtime $TAG" --notes-file "$NOTES")
+  [[ "$DRAFT" -eq 1 ]] && EDIT_ARGS+=(--draft)
+  gh release edit "${EDIT_ARGS[@]}"
 else
   gh release create "${RELEASE_ARGS[@]}"
 fi
 
 echo
-echo "Release published:"
+echo "Release uploaded ($REPO_VISIBILITY, draft=$DRAFT):"
 gh release view "$TAG" --repo "$REPO" --json url --jq .url
 echo
 cat "$CHECKSUMS"

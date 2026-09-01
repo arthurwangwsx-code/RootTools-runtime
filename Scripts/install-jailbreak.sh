@@ -4,6 +4,7 @@ ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 cd "$ROOT"
 UDID="${ROOTTOOLS_UDID:-$(idevice_id -l | head -1)}"
 [[ -n "$UDID" ]] || { echo "No USB iPhone found" >&2; exit 1; }
+CREDENTIAL_PROFILE="${ROOTTOOLS_CREDENTIAL_PROFILE:-installed}"
 
 bash Scripts/build.sh
 APP="build/DerivedData/Build/Products/Release-iphoneos/RootTools.app"
@@ -27,5 +28,4 @@ python3 Scripts/root_exec.py --udid "$UDID" exec "LDID=''; for candidate in /var
 
 python3 Scripts/root_exec.py --udid "$UDID" exec "chmod 755 /var/jb/usr/local/bin/roottools-execd /var/jb/usr/local/bin/roottools-updater; chown 0:0 /var/jb/usr/local/bin/roottools-execd /var/jb/usr/local/bin/roottools-updater /var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist /var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist; launchctl bootout user/foreground/com.arthur.roottools.execd >/dev/null 2>&1 || true; launchctl bootout user/foreground/com.arthur.roottools.updater >/dev/null 2>&1 || true; launchctl bootstrap user/foreground /var/jb/Library/LaunchDaemons/com.arthur.roottools.execd.plist; launchctl bootstrap user/foreground /var/jb/Library/LaunchDaemons/com.arthur.roottools.updater.plist; sleep 1; /var/jb/usr/bin/uicache -p '$REMOTE_APP'; /var/jb/usr/bin/uicache -i com.arthur.roottools.ios >/dev/null"
 
-echo "Installed RootTools + root daemon on $UDID"
-
+echo "Installed RootTools + root daemon on $UDID with credential profile $CREDENTIAL_PROFILE"

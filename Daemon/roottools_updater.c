@@ -172,7 +172,15 @@ static int required_payload_present(const char *root) {
     return 1;
 }
 
-static int http_version(char *out, size_t cap) {
+static int json_string_field(const char *json, const char *field, char *out, size_t cap) {
+    if(!json||!field||!out||cap<2)return 0;
+    char key[128];int n=snprintf(key,sizeof(key),"\"%s\":\"",field);
+    if(n<=0||(size_t)n>=sizeof(key))return 0;
+    const char *p=strstr(json,key);if(!p)return 0;p+=strlen(key);const char *end=strchr(p,'\"');if(!end)return 0;
+    size_t len=(size_t)(end-p);if(!len||len>=cap)return 0;memcpy(out,p,len);out[len]=0;return 1;
+}
+
+static int http_identity(char *daemon_out, size_t daemon_cap, char *package_out, size_t package_cap) {
     int fd=socket(AF_INET,SOCK_STREAM,0);if(fd<0)return 0;
     struct timeval tv={.tv_sec=1,.tv_usec=0};setsockopt(fd,SOL_SOCKET,SO_RCVTIMEO,&tv,sizeof(tv));setsockopt(fd,SOL_SOCKET,SO_SNDTIMEO,&tv,sizeof(tv));
     struct sockaddr_in addr={0};addr.sin_family=AF_INET;addr.sin_port=htons(DAEMON_PORT);addr.sin_addr.s_addr=htonl(INADDR_LOOPBACK);
@@ -182,12 +190,20 @@ static int http_version(char *out, size_t cap) {
     char response[8192]={0};size_t used=0;ssize_t r;
     while(used+1<sizeof(response)&&(r=recv(fd,response+used,sizeof(response)-used-1,0))>0)used+=(size_t)r;
     close(fd);response[used]=0;
-    const char *key="\"daemonVersion\":\"";char *p=strstr(response,key);if(!p)return 0;p+=strlen(key);char *end=strchr(p,'"');if(!end)return 0;
-    size_t len=(size_t)(end-p);if(!len||len>=cap)return 0;memcpy(out,p,len);out[len]=0;return 1;
+    package_out[0]=0;
+    return json_string_field(response,"daemonVersion",daemon_out,daemon_cap)&&
+           (json_string_field(response,"packageVersion",package_out,package_cap)||package_out[0]==0);
 }
 
-static int wait_version(const char *expected) {
-    for(int i=0;i<60;i++){char version[64]={0};if(http_version(version,sizeof(version))&&!strcmp(version,expected))return 1;usleep(250000);}return 0;
+static int wait_identity(const char *expected_daemon, const char *expected_package) {
+    for(int i=0;i<60;i++){
+        char daemon_version[64]={0},package_version[128]={0};
+        if(http_identity(daemon_version,sizeof(daemon_version),package_version,sizeof(package_version))&&
+           !strcmp(daemon_version,expected_daemon)&&
+           ((!expected_package||!expected_package[0])||!strcmp(package_version,expected_package)))return 1;
+        usleep(250000);
+    }
+    return 0;
 }
 
 static void daemon_version_from_package(const char *package_version, char *out, size_t cap) {
@@ -273,21 +289,21 @@ static int run_update(const char *request_id) {
     if(!rt_package_resolve_artifact(update.package_id,"ready",&package,artifact,sizeof(artifact))||strcmp(package.format,"deb")||strcmp(package.expected_identifier,"com.arthur.roottools")){
         rt_update_mark(request_id,"failed",NULL,NULL,"verified RootTools DEB unavailable");return 4;
     }
-    char package_name[128]={0},package_version[128]={0},target_version[64]={0};
+    char package_name[128]={0},package_version[128]={0},target_daemon_version[64]={0};
     if(!rt_package_deb_field(update.package_id,"Package",package_name,sizeof(package_name))||strcmp(package_name,"com.arthur.roottools")||
        !rt_package_deb_field(update.package_id,"Version",package_version,sizeof(package_version))){
         rt_update_mark(request_id,"failed",NULL,NULL,"RootTools DEB metadata validation failed");return 5;
     }
-    daemon_version_from_package(package_version,target_version,sizeof(target_version));
-    if(!target_version[0]){rt_update_mark(request_id,"failed",NULL,NULL,"target daemon version unavailable");return 6;}
-    rt_update_mark(request_id,"running",target_version,"extracting",NULL);
+    daemon_version_from_package(package_version,target_daemon_version,sizeof(target_daemon_version));
+    if(!target_daemon_version[0]){rt_update_mark(request_id,"failed",NULL,NULL,"target daemon version unavailable");return 6;}
+    rt_update_mark(request_id,"running",package_version,"extracting",NULL);
 
     char work[1536];int n=snprintf(work,sizeof(work),"%s/%s",work_root(),request_id);
-    if(n<=0||(size_t)n>=sizeof(work)||!mkdir_parents(work_root(),0700)){rt_update_mark(request_id,"failed",target_version,NULL,"update work directory unavailable");return 7;}
-    remove_tree(work);if(mkdir(work,0700)!=0){rt_update_mark(request_id,"failed",target_version,NULL,"update work directory could not be created");return 8;}
+    if(n<=0||(size_t)n>=sizeof(work)||!mkdir_parents(work_root(),0700)){rt_update_mark(request_id,"failed",package_version,NULL,"update work directory unavailable");return 7;}
+    remove_tree(work);if(mkdir(work,0700)!=0){rt_update_mark(request_id,"failed",package_version,NULL,"update work directory could not be created");return 8;}
     char *extract_argv[]={(char*)"dpkg-deb",(char*)"-x",artifact,work,NULL};
     if(access(dpkg_deb(),X_OK)!=0||spawn_timeout(dpkg_deb(),extract_argv,60)!=0||!validate_tree_recursive(work,work)||!required_payload_present(work)){
-        remove_tree(work);rt_update_mark(request_id,"failed",target_version,NULL,"self-update payload extraction/allowlist validation failed");return 9;
+        remove_tree(work);rt_update_mark(request_id,"failed",package_version,NULL,"self-update payload extraction/allowlist validation failed");return 9;
     }
 
     char source_app[1536],source_daemon[1536],source_updater[1536],source_daemon_plist[1536],source_updater_plist[1536];
@@ -300,14 +316,15 @@ static int run_update(const char *request_id) {
     if(!prepare_swap(app_path(),source_app,request_id,&swaps[0])||!prepare_swap(daemon_path(),source_daemon,request_id,&swaps[1])||
        !prepare_swap(updater_path(),source_updater,request_id,&swaps[2])||!prepare_swap(daemon_plist(),source_daemon_plist,request_id,&swaps[3])||
        !prepare_swap(updater_plist(),source_updater_plist,request_id,&swaps[4])){
-        for(int i=0;i<5;i++)cleanup_swap(&swaps[i]);remove_tree(work);rt_update_mark(request_id,"failed",target_version,NULL,"candidate preparation failed");return 10;
+        for(int i=0;i<5;i++)cleanup_swap(&swaps[i]);remove_tree(work);rt_update_mark(request_id,"failed",package_version,NULL,"candidate preparation failed");return 10;
     }
     char candidate_app_exec[1536];snprintf(candidate_app_exec,sizeof(candidate_app_exec),"%s/RootTools",swaps[0].candidate);
     if(!sign_file(candidate_app_exec)||!sign_file(swaps[1].candidate)||!sign_file(swaps[2].candidate)){
-        for(int i=0;i<5;i++)cleanup_swap(&swaps[i]);remove_tree(work);rt_update_mark(request_id,"failed",target_version,NULL,"candidate signing failed");return 11;
+        for(int i=0;i<5;i++)cleanup_swap(&swaps[i]);remove_tree(work);rt_update_mark(request_id,"failed",package_version,NULL,"candidate signing failed");return 11;
     }
-    char old_version[64]={0};(void)http_version(old_version,sizeof(old_version));
-    rt_update_mark(request_id,"running",target_version,"switching",NULL);
+    char old_daemon_version[64]={0},old_package_version[128]={0};
+    (void)http_identity(old_daemon_version,sizeof(old_daemon_version),old_package_version,sizeof(old_package_version));
+    rt_update_mark(request_id,"running",package_version,"switching",NULL);
     int bootout_ok=bootout_daemon();
     int applied=bootout_ok;
     int apply_failed_index=-1;
@@ -320,13 +337,13 @@ static int run_update(const char *request_id) {
         if(bootstrap_ok){
             app_refresh_ok=refresh_app();
             app_registration_ok=app_refresh_ok&&wait_app_registered();
-            new_health_ok=wait_version(target_version);
+            new_health_ok=wait_identity(target_daemon_version,package_version);
         }
     }
     if(applied&&bootstrap_ok&&app_registration_ok&&new_health_ok){
         for(int i=0;i<5;i++)cleanup_swap(&swaps[i]);remove_tree(work);
         rt_package_mark_external_install(update.package_id,"self-update","roottools.updater");
-        rt_update_mark(request_id,"succeeded",target_version,"new daemon and foreground app healthy",NULL);return 0;
+        rt_update_mark(request_id,"succeeded",package_version,"new daemon and foreground app healthy",NULL);return 0;
     }
 
     char transition_error[512]={0};
@@ -336,24 +353,25 @@ static int run_update(const char *request_id) {
     else if(!app_refresh_ok)snprintf(transition_error,sizeof(transition_error),"foreground App uicache registration command failed");
     else if(!app_registration_ok)snprintf(transition_error,sizeof(transition_error),"foreground App was not discoverable after uicache registration");
     else snprintf(transition_error,sizeof(transition_error),"new daemon failed authenticated version health check");
-    rt_update_mark(request_id,"running",target_version,"rolling_back",transition_error);
+    rt_update_mark(request_id,"running",package_version,"rolling_back",transition_error);
 
     (void)bootout_daemon();
     for(int i=4;i>=0;i--)rollback_swap(&swaps[i]);
     for(int i=0;i<5;i++)cleanup_swap(&swaps[i]);
     int rollback_boot=bootstrap_daemon();
     int rollback_app=rollback_boot&&refresh_app()&&wait_app_registered();
-    int rollback_health=rollback_app&&old_version[0]&&wait_version(old_version);
+    int rollback_health=rollback_app&&old_daemon_version[0]&&wait_identity(old_daemon_version,old_package_version);
     remove_tree(work);
-    if(rollback_health){rt_update_mark(request_id,"rolled_back",target_version,"previous daemon and foreground app restored",transition_error);return 12;}
+    if(rollback_health){rt_update_mark(request_id,"rolled_back",package_version,"previous daemon and foreground app restored",transition_error);return 12;}
     char rollback_error[768]={0};
-    snprintf(rollback_error,sizeof(rollback_error),"%s; rollback bootstrap=%s appRegistration=%s previousVersion=%s rollbackHealth=%s",
+    snprintf(rollback_error,sizeof(rollback_error),"%s; rollback bootstrap=%s appRegistration=%s previousDaemonVersion=%s previousPackageVersion=%s rollbackHealth=%s",
         transition_error,
         rollback_boot?"ok":"failed",
         rollback_app?"ok":"failed",
-        old_version[0]?old_version:"unavailable",
+        old_daemon_version[0]?old_daemon_version:"unavailable",
+        old_package_version[0]?old_package_version:"legacy-unreported",
         rollback_health?"ok":"failed");
-    rt_update_mark(request_id,"rollback_failed",target_version,NULL,rollback_error);return 13;
+    rt_update_mark(request_id,"rollback_failed",package_version,NULL,rollback_error);return 13;
 }
 
 int main(int argc, char **argv) {
