@@ -2,7 +2,7 @@
 
 > Living handoff document. Read this before changing RootTools and update it whenever a stable Git milestone, physical-device deployment boundary, or active workstream changes.
 
-Last refreshed: **2026-08-28 +08:00**
+Last refreshed: **2026-09-01 +08:00**
 
 ## 1. Product position
 
@@ -31,8 +31,9 @@ RootTools is deliberately **not** a generic jailbreak shell. R3 and `device.raw-
 | v0.20 | `3f01efd` | Product-level Scoped Files Manager |
 | v0.21 | `946f894` | Trusted v0.9 bootstrap migration + Dopamine launchd-domain fixes |
 | v0.22 | `f0559ec` | Remote Access session + updater hardening + task scheduler fairness |
+| v0.23.0-2 | release manifest | Repository split, isolated candidate credentials, exact package identity and offline qualification |
 
-The physical v0.21 deployment is the first post-v0.9 RootTools runtime that has been proven healthy on the reference device. v0.22 is source/contract/Release-build validated but still requires physical deployment and off-USB Tailnet qualification.
+The physical v0.21 deployment is the first post-v0.9 RootTools runtime that has been proven healthy on the reference device. v0.23.0-2 is source/contract/Release-build/Simulator validated but still requires credential migration, physical deployment and off-USB Tailnet qualification.
 
 ## 3. Reference physical-device truth
 
@@ -58,7 +59,7 @@ The Root Tools foreground app is also present and usable. During the migration/u
 
 Do not hard-code the physical UDID in docs or source. Discover it through the host tooling.
 
-## 4. Stable source capabilities through v0.22
+## 4. Stable source capabilities through v0.23
 
 ### 4.1 Permission and trust model
 
@@ -192,7 +193,7 @@ The one-time migration path preserves the RootTools trust model:
 
 Host tooling also now avoids importing `pymobiledevice3` when `idevice_id`/`iproxy` are already available, so standard libimobiledevice hosts do not fail merely because the Python fallback package is absent.
 
-## 6. v0.22 source milestone
+## 6. v0.22–v0.23 source milestones
 
 v0.22 is committed and source validated.
 
@@ -209,11 +210,28 @@ It includes:
 
 Do not describe v0.22 as physically qualified until the reference device reports v0.22 and an off-USB Tailnet session has passed the remote regression.
 
+v0.23.0-2 adds maintenance and release safety without widening privileged
+authority:
+
+- the public source repository and private personalized-artifact repository are
+  separate, enforced release targets;
+- `installed` credentials are preserved while named candidate profiles use
+  different Owner and Agent credentials;
+- daemon hello/status and Self-Updater health checks include exact
+  `packageVersion`, so Debian revisions cannot masquerade as the same core;
+- candidate DEB/IPA and rollback DEB are scanned offline for their intended
+  credential profile without writing raw values into evidence;
+- a repeatable iOS Simulator + Mac fixture daemon gate proves the real App
+  launch, Owner authentication, version identity and visible Overview state.
+
+Do not describe v0.23.0-2 as physically qualified until the reserved physical
+ledger is complete.
+
 ## 7. Network / off-USB execution boundary
 
 RootTools currently has the pieces needed for remote operation, but the security architecture intentionally separates **transport** from **privilege**.
 
-Today in v0.22 source:
+Today in v0.23 source:
 
 - USB/usbmux is the qualified direct Host transport.
 - SSH, Frida and ZXTouch are available locally on the jailbroken device.
@@ -230,14 +248,18 @@ The latest off-USB discovery also established an important bootstrap fact: if Ta
 
 Stable v0.19 and v0.20 have their own validation records under `docs/validation/`.
 
-v0.22 source validation includes:
+v0.23.0-2 offline validation includes:
 
 - complete `Scripts/test.sh`: PASS;
-- Remote Access controller unit contract: PASS;
-- provider/update/principal contracts: PASS;
-- HTTP Remote Access authorization contract: PASS;
-- iOS 16 Release build: `BUILD SUCCEEDED`;
-- rootless package produced as `roottools_0.22.0-3_iphoneos-arm64.deb`.
+- candidate-profile contract and HTTP suites: PASS;
+- unsigned iOS 16+ `iphoneos` Release build: `BUILD SUCCEEDED`;
+- rootless DEB and TrollStore IPA packaged twice with byte-identical output;
+- binary credential scan: candidate credentials present, installed credentials absent;
+- rollback DEB scan: installed credentials retained;
+- Simulator Release build/install/launch and candidate Owner authentication: PASS;
+- screenshot inspection: Overview rendered with `ROOT ONLINE` and no observed clipping;
+- exact fixture identity: `daemonVersion=0.23.0`, `packageVersion=0.23.0-2`;
+- physical Dopamine, launchd, TrollStore, USB, Tailnet and rollback gates: pending.
 
 Physical v0.21 evidence includes:
 
@@ -272,20 +294,24 @@ Never print or commit token contents.
 - the host usbmux fallback may use pymobiledevice3, but it is no longer an unconditional import dependency when libimobiledevice tools exist.
 - canonical repository: `arthurwangwsx-code/RootTools-runtime`;
 - repository visibility: public;
+- private artifact repository: `arthurwangwsx-code/RootTools-runtime-releases`;
+- artifact repository visibility: private;
 - full tests/build/release packaging run locally on the maintainer Mac;
 - GitHub Actions is manual-only and limited to lightweight repository hygiene;
-- GitHub Releases is the canonical public binary distribution channel.
+- public binary distribution is blocked while credentials are embedded.
 
 ## 10. Immediate priorities
 
-Repository and credential maintenance hardening is source/build/package validated on the v0.23 development line. The canonical checkout now enforces owner-only token files and rejects release attempts from the historical mixed checkout. See `docs/validation/v0.23-maintenance-hardening.md`.
+v0.23.0-2 is the prepared private release candidate. Offline work is closed by
+`docs/validation/v0.23.0-2-offline-release.md`; the remaining gates require the
+reference phone and are reserved in
+`docs/validation/v0.23.0-2-physical-ledger.md`.
 
-1. install the canonical Runtime candidate and run `verify-device.py --install --full` on the reference device;
-2. run the three-phase `qualify-remote-access.py` procedure in `docs/validation/remote-access-physical-runbook.md`;
-3. retain the completed, secret-free receipt evidence for session expiry/stop/revoke and off-USB R0/R1 execution;
-4. retire the frozen legacy iOS checkout only after credential migration and physical acceptance;
-5. deepen Accessibility/selector/vision UI automation;
-6. deepen Task Runtime into Workflow / Trigger / Retry / Result semantics;
-7. continue reboot/re-jailbreak/crash-loop recovery and Production 1.0 hardening.
+1. capture installed-profile preflight and exact device identity before mutation;
+2. install v0.23.0-2 with `candidate-v0.23.0-2` and run the full typed regression;
+3. prove candidate Owner/Agent acceptance and installed Owner/Agent rejection;
+4. run the three-phase off-USB Tailnet qualification and close stop/expiry/revoke;
+5. rehearse rollback or record an explicit rollback waiver, then retain or retire the legacy snapshot accordingly;
+6. continue P7 recovery, P4 semantic UI automation, P9 credential lifecycle and later P10 AiBox integration.
 
 AiBox remains deferred until these RootTools runtime and remote-operation boundaries are stable.

@@ -21,17 +21,23 @@ The following files are local credentials and are excluded from Git:
 
 - `.roottools-token`
 - `.roottools-agent-token`
+- `.roottools-credentials/<profile>/owner-token`
+- `.roottools-credentials/<profile>/agent-token`
 
 Do not paste their contents into issues, logs, screenshots, test fixtures or documentation.
 Build and test tooling must create these files with owner-only (`0600`) permissions, reject symbolic links, and reject malformed token contents. Do not copy credentials between legacy and canonical checkouts; rotate or migrate them only as part of an explicitly verified device transition.
 
-The current App, daemon and updater binaries embed matching personalized
-credentials. A Git ignore rule protects source control but does not remove those
-values from compiled artifacts. Do not publish RootTools binary assets from a
-public repository. The local release workflow therefore requires a draft on the
-public canonical repository; public binary distribution remains blocked until
-the artifacts are moved to a private repository or credentials are provisioned
-securely on-device.
+The `installed` profile is reserved for credentials used by the current physical
+deployment. Every upgrade candidate must use a different named profile. The App,
+daemon and updater binaries embed matching personalized credentials; a Git ignore
+rule protects source control but does not remove values from compiled artifacts.
+Official binaries therefore belong only in the private
+`arthurwangwsx-code/RootTools-runtime-releases` repository. The public source
+repository is permitted only as a maintainer-only draft fallback. Public binary
+distribution remains blocked until credentials are provisioned securely on-device.
+
+Release manifests and qualification receipts may contain credential SHA-256
+fingerprints for provenance. They must never contain raw credential values.
 
 ## Reporting a vulnerability
 

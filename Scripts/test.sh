@@ -99,7 +99,9 @@ python3 -m py_compile \
   Scripts/migrate-v09-updater-path.py \
   Scripts/package-rootless-deb.py \
   Scripts/package-ipa.py \
-  Scripts/prepare-credential-migration.py
+  Scripts/prepare-credential-migration.py \
+  Scripts/validate-simulator.py \
+  Scripts/verify-credential-transition.py
 bash -n Scripts/*.sh Tests/*.sh
 
 echo "RootTools contract tests: PASS"

@@ -120,9 +120,12 @@ Each domain converges on:
 
 ## Near-term order
 
-1. Stabilize the P8 five-tab product shell and device-management interaction model.
-2. Finish P3/P4 provider hardening and semantic UI automation without introducing raw execution primitives.
-3. Deepen P9 Command Gateway with principal identity/grants while keeping the existing capability router as the only executor seam.
-4. Add the P10 AiBox adapter against AiBox `DeviceExecution*`, not a second RootTools-specific action model.
-5. Add outbound network relay only after principal/grant/revocation and task/audit semantics are complete.
-
+1. Close the v0.23.0-2 production gate: private personalized release,
+   credential migration, exact package-version receipt, USB regression,
+   off-USB Tailnet regression, rollback decision and legacy-snapshot retirement.
+2. Continue P7 reboot/re-jailbreak/crash-loop and interrupted-update recovery.
+3. Stabilize the P8 five-tab product shell and device-management interaction model.
+4. Finish P3/P4 provider hardening and semantic UI automation without introducing raw execution primitives.
+5. Deepen P9 Command Gateway with resource-scoped grants, pairing, credential lifecycle and one-shot R2 approval.
+6. Add the P10 AiBox adapter against AiBox `DeviceExecution*`, not a second RootTools-specific action model.
+7. Add outbound network relay only after principal/grant/revocation and task/audit semantics are complete.

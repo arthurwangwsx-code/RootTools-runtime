@@ -4,12 +4,14 @@ RootTools Runtime targets iOS 16+ Dopamine/rootless jailbreak environments.
 
 ## Recommended install
 
-1. Open the latest release on GitHub.
+1. Sign in to the authorized GitHub account and open the latest candidate in the
+   private `arthurwangwsx-code/RootTools-runtime-releases` repository.
 2. Download `roottools_<version>_iphoneos-arm64.deb` and `SHA256SUMS`.
 3. Verify the checksum when possible.
 4. Install the DEB using a compatible rootless package manager such as Sileo.
 5. Open **Root Tools** from the Home Screen.
-6. Confirm that Overview reports the privileged runtime online and `UID 0`.
+6. Confirm that Overview reports the privileged runtime online and `UID 0`, and
+   that `/v1/status` reports the exact DEB revision as `packageVersion`.
 
 The package installs:
 
@@ -23,7 +25,13 @@ The package registers the app with `uicache` and starts the launchd jobs in the 
 
 ## Upgrade
 
-For an already-modern RootTools installation, prefer the in-product typed Self-Updater when it is available and healthy. The Self-Updater verifies a staged `com.arthur.roottools` DEB, restricts extracted payload paths, signs candidate binaries, switches targets, checks the new daemon version and rolls back if health verification fails.
+For an already-modern RootTools installation, prefer the in-product typed Self-Updater when it is available and healthy. The Self-Updater verifies a staged `com.arthur.roottools` DEB, restricts extracted payload paths, signs candidate binaries, switches targets, checks both the daemon core version and exact package revision, and rolls back if health verification fails.
+
+Credential-changing upgrades must retain the previous personalized DEB and use
+the physical migration ledger. Do not overwrite or delete the `installed`
+profile before the candidate Owner and Agent credentials have both authenticated
+on the phone and the old credentials have been rejected. See
+`docs/validation/v0.23.0-2-physical-ledger.md`.
 
 A downloaded DEB may also be installed explicitly through Sileo when recovering from a broken runtime or when the current device is not remotely reachable.
 
@@ -64,6 +72,6 @@ not report the matching daemon online at UID 0, install the same release's DEB.
 Do not pass this ad-hoc/TrollStore package to `ideviceinstaller`, which expects
 a normal Apple development or distribution signature.
 
-RootTools artifacts are personalized and are stored in a maintainer-only draft
-when the source repository is public. Sign in to the authorized GitHub account
-before downloading them.
+RootTools artifacts are personalized and are stored in the dedicated private
+artifact repository. A public-source-repository draft is an emergency
+maintainer-only fallback, not a public distribution channel.

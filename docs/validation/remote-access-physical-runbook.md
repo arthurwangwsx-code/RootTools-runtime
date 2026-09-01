@@ -18,7 +18,10 @@ Principal credentials and the evidence state are written under ignored `build/qu
 Connect the reference iPhone by USB, unlock it, trust the Mac, ensure Dopamine is active, open/connect Tailscale, and keep the display visible. Then run:
 
 ```bash
-python3 Scripts/verify-device.py --install --full
+python3 Scripts/verify-device.py \
+  --credential-profile candidate-v0.23.0-2 \
+  --install \
+  --full
 ```
 
 This must report the daemon version derived from `VERSION`, UID 0, rootless readiness and the complete typed Device Service regression before Remote Access preparation starts.
@@ -26,7 +29,9 @@ This must report the daemon version derived from `VERSION`, UID 0, rootless read
 ## Phase 1: prepare over USB
 
 ```bash
-python3 Scripts/qualify-remote-access.py prepare
+python3 Scripts/qualify-remote-access.py \
+  --credential-profile candidate-v0.23.0-2 \
+  prepare
 ```
 
 The command:
@@ -45,7 +50,9 @@ Do not delete those files before cleanup. If preparation fails after Principal c
 Physically unplug the iPhone from USB while keeping it unlocked and Tailscale online. Then run:
 
 ```bash
-python3 Scripts/qualify-remote-access.py verify
+python3 Scripts/qualify-remote-access.py \
+  --credential-profile candidate-v0.23.0-2 \
+  verify
 ```
 
 The command fails if any USB iPhone remains visible. Over the recorded Tailnet address it then proves:
@@ -61,7 +68,10 @@ Successful evidence advances the state file to `remote-verified`.
 Reconnect and unlock the same iPhone, then run:
 
 ```bash
-python3 Scripts/qualify-remote-access.py cleanup --verify-expiry
+python3 Scripts/qualify-remote-access.py \
+  --credential-profile candidate-v0.23.0-2 \
+  cleanup \
+  --verify-expiry
 ```
 
 The command proves that:
@@ -78,8 +88,8 @@ Expiry verification takes slightly over five minutes and prints progress every 3
 Physical Remote Access qualification is complete only when both commands below have passed for the same candidate and the evidence state says `complete`:
 
 ```bash
-python3 Scripts/verify-device.py --install --full
-python3 Scripts/qualify-remote-access.py cleanup --verify-expiry
+python3 Scripts/verify-device.py --credential-profile candidate-v0.23.0-2 --install --full
+python3 Scripts/qualify-remote-access.py --credential-profile candidate-v0.23.0-2 cleanup --verify-expiry
 ```
 
 Source tests, a successful Release build, USB-only calls, an online Tailscale peer, or a `prepared` evidence file are not substitutes for this physical acceptance.
